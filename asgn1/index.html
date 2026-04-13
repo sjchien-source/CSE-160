@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<p>
+Sydney Chien <br>
+sjchien@ucsc.edu <br>
+Awesome Feature: Click mini game. Click the circles before they disappear to earn points.
+</p>
+<head>
+  <meta charset="utf-8" />
+  <title>Colored Points Step 11</title>
+</head>
+
+<body onload="main()">
+  <canvas id="webgl" width="400" height="400">
+    Please use a browser that supports canvas
+  </canvas> 
+  <img src="reference.jpeg" width="400">
+  
+</div>
+  
+   </p>
+    <button id="clearButton">Clear Canvas</button>
+  <p>
+    Drawing Mode:
+    </p>
+    <button id="pointButton">Squares</button>
+    <button id="triangleButton">Triangles</button>
+    <button id="circleButton">Circles</button>
+
+  </p>
+
+  <p>
+    Red
+    <input type="range" id="redSlide" min="0" max="100" value="100">
+
+    Green
+    <input type="range" id="greenSlide" min="0" max="100" value="100">
+
+    Blue
+    <input type="range" id="blueSlide" min="0" max="100" value="100">
+  </p>
+
+  <p>
+    Shape Size:
+    <input type="range" id="sizeSlide" min="5" max="40" value="10">
+
+    (Circles) Segment Count:
+    <input type="range" id="segmentSlide" min="3" max="40" value="10">
+    <span id="segmentValue">10</span>
+  </p>
+  <button id="drawPictureButton">Draw Picture</button>
+  <p>
+  <button id="gameButton">Start Game</button>
+  <button id="stopGameButton">Stop Game</button>
+</p>
+
+<p>
+  Score: <span id="scoreDisplay">0</span>
+  &nbsp;  &nbsp;
+  Time Left: <span id="timeDisplay">30</span>
+</p>
+
+<p id="awesomeNote">
+</p>
+
+  <script src="lib/webgl-utils.js"></script>
+  <script src="lib/webgl-debug.js"></script>
+  <script src="lib/cuon-utils.js"></script>
+  <script src="ColoredPoints.js"></script>
+</body>
+</html>
