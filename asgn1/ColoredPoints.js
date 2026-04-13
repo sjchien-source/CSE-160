@@ -80,7 +80,7 @@ class Triangle {
 
     var d = this.size / 200.0;
     drawTriangle([
-      xy[0],     xy[1] + d,
+      xy[0],xy[1] + d,
       xy[0] - d, xy[1] - d,
       xy[0] + d, xy[1] - d
     ]);
@@ -119,11 +119,7 @@ class Circle {
       var x2 = xy[0] + Math.cos(angle2 * Math.PI / 180) * radius;
       var y2 = xy[1] + Math.sin(angle2 * Math.PI / 180) * radius;
 
-      drawTriangle([
-        xy[0], xy[1],
-        x1, y1,
-        x2, y2
-      ]);
+      drawTriangle([xy[0], xy[1], x1, y1,x2, y2]);
     }
   }
 }
