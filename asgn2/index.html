@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<style> 
+  body { text-align: center; }
+</style> 
+
+<body onload="main()">
+
+  <h2>Sydney Chien Dog Blocky Animal</h2>
+  <p> sjchien@ucsc.edu</p>
+  <p id="fps">FPS: -</p>
+  <canvas id="webgl" width="600" height="600"></canvas>
+
+  <div class="controls">
+    <p>
+      Global Rotation:
+      <input type="range" id="globalRot" min="0" max="360" value="0">
+    </p>
+
+    <p>
+      Thigh Angle:
+      <input type="range" id="legAngle" min="-45" max="45" value="0">
+    </p>
+
+    <p>
+      Calf Angle:
+      <input type="range" id="calfAngle" min="-45" max="45" value="0">
+    </p>
+
+    <p>
+      Paw Angle:
+      <input type="range" id="footAngle" min="-45" max="45" value="0">
+    </p>
+
+    <button id="animBtn">Toggle Animation</button>
+
+
+    <p>
+
+  </div>
+
+<script src="./lib/cuon-utils.js"></script>
+<script src="./lib/cuon-matrix.js"></script>
+<script src="main.js"></script>
+
+</body>
+</html>
