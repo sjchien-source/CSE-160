@@ -264,7 +264,11 @@ function renderScene() {
   globalRotMat.rotate(gMouseYRotation, 0, 1, 0);
   globalRotMat.scale(0.5, 0.5, 0.5);
   gl.uniformMatrix4fv(u_GlobalRotation, false, globalRotMat.elements);
-
+  
+    let floor = new Matrix4();
+    floor.translate(0, -1.48, 0); 
+    floor.scale(2,.9, 2); 
+    drawCube(floor, [0.2, 0.6, 0.2, 1]); 
   let body = new Matrix4();
   body.translate(0, 0, 0);
   body.scale(1.4, 0.65, 0.55);
