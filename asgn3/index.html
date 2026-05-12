@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Sydney Chien Assignment 4</title>
+
+  <style>
+    body {
+      text-align: center;
+      font-family: Arial, sans-serif;
+      background-color: #eeeeee;
+    }
+
+    canvas {
+      border: 1px solid black;
+    }
+
+    .controls {
+      margin-top: 12px;
+    }
+  </style>
+</head>
+
+<body onload="main()">
+
+  <h2>Sydney Chien Assignment 4</h2>
+  <p>sjchien@ucsc.edu</p>
+  <p id="fps">FPS: -</p>
+
+  <canvas id="webgl" width="600" height="600">
+    Please use a browser that supports canvas.
+  </canvas>
+
+  <div class="controls">
+    <p>
+        WASD to move QE turn F add block R remove block
+    </p>
+
+  </div>
+
+<script src="./lib/cuon-utils.js"></script>
+<script src="./lib/cuon-matrix.js"></script>
+<script src="camera.js"></script>
+<script src="main.js"></script>
+
+</body>
+</html>
