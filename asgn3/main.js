@@ -17,10 +17,7 @@ let u_UVScale;
 let g_textures = {};
 
 const TEXTURE_UNITS = {
-  wall: 0,
-  grass: 1,
-  sand: 2,
-  diamond: 3
+  wall: 0, grass: 1,sand: 2, diamond: 3
 };
 
 const TEXTURE_PATHS = {
