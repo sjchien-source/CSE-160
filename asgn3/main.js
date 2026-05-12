@@ -1193,7 +1193,7 @@ function drawDog() {
   // The dog appears after you dig it out. It is lowered so its feet sit on the sand/grass.
   const dogX = DOG_WORLD_X;
   const dogZ = DOG_WORLD_Z;
-  const dogY = getGroundHeightAtPosition(dogX, dogZ) + 0.15;
+  const dogY = getGroundHeightAtPosition(dogX, dogZ) + 0.45;
 
   let body = makeDogMatrix(dogX, dogY, dogZ);
   body.translate(0, 0, 0);
