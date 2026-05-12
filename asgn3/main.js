@@ -24,6 +24,8 @@ const TEXTURE_UNITS = {
 };
 
 const TEXTURE_PATHS = {
+    wall: ["./textures/wall.png", "./textures/wall.jpg", "./wall.png", "./wall.jpg", "textures/wall.png", "textures/wall.jpg", "wall.png", "wall.jpg"],
+
   grass: ["./grass.jpg", "grass.jpg", "./textures/grass.jpg", "textures/grass.jpg", "./grass.png", "grass.png", "./textures/grass.png", "textures/grass.png"],
 
   sand: ["./sand.jpg", "sand.jpg", "./textures/sand.jpg", "textures/sand.jpg", "./sand.png", "sand.png", "./textures/sand.png", "textures/sand.png"],
@@ -398,6 +400,8 @@ function initCubeBuffer() {
 }
 
 function initTextures() {
+  createTextureWithFallback("wall",[170, 170, 170, 255,90, 90, 90, 255,90, 90, 90, 255,170, 170, 170, 255]);
+
   createTextureWithFallback("grass",[75, 150, 60, 255,45, 110, 35, 255,45, 110, 35, 255,75, 150, 60, 255]);
 
   createTextureWithFallback("sand",[214, 190, 130, 255,191, 166, 105, 255,226, 205, 149, 255,174, 148, 91, 255]);
@@ -1135,10 +1139,10 @@ function drawWorld() {
       let height = g_map[z][x];
 
       for (let y = 0; y < height; y++) {
-        let diamond = new Matrix4();
-        diamond.translate(x - WORLD_SIZE / 2 + 0.5, y, z - WORLD_SIZE / 2 + 0.5);
-        diamond.scale(1, 1, 1);
-        drawTexturedCube(diamond, [1.0, 1.0, 1.0, 1.0], "diamond", 1.0, 1.0);
+        let wall = new Matrix4();
+        wall.translate(x - WORLD_SIZE / 2 + 0.5, y, z - WORLD_SIZE / 2 + 0.5);
+        wall.scale(1, 1, 1);
+        drawTexturedCube(wall, [1.0, 1.0, 1.0, 1.0], "wall", 1.0, 1.0);
       }
     }
   }
