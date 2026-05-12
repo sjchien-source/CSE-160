@@ -20,8 +20,44 @@
       display: block;
     }
 
+    #hud {
+      position: absolute;
+      left: 8px;
+      top: 8px;
+      z-index: 2;
+      min-width: 145px;
+      padding: 8px 10px;
+      background: rgba(0, 0, 0, 0.55);
+      color: white;
+      border: 1px solid rgba(255, 255, 255, 0.5);
+      border-radius: 6px;
+      text-align: left;
+      font-family: Arial, sans-serif;
+      font-size: 14px;
+      line-height: 1.35;
+      pointer-events: none;
+    }
+
+    #dog-message {
+      margin-top: 4px;
+      font-weight: bold;
+      color: #ffd966;
+    }
+
+    #confetti-canvas {
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 10;
+      border: none;
+      pointer-events: none;
+    }
+
     #crosshair {
       position: absolute;
+      z-index: 3;
       left: 50%;
       top: 50%;
       width: 14px;
@@ -93,23 +129,24 @@
     <p><strong>Story:</strong> Your dog is buried somewhere near the starting area. Dig carefully, find the dog, and mine all 20 / 20 diamonds then <strong>You win!</strong></p>
   </div>
 
-  <p id="fps">FPS: -</p>
-  <p>Diamonds found: <span id="diamond-counter">0 / 20</span></p>
-  <p id="dog-message"></p>
-  <p id="pointer-lock-status">Click the canvas to lock the mouse for FPS-style camera controls.</p>
-
   <div class="canvas-wrap">
-    <canvas id="webgl" width="800" height="800">
+    <canvas id="webgl" width="700" height="700">
       Please use a browser that supports canvas.
     </canvas>
+    <div id="hud">
+      <div id="fps">FPS: -</div>
+      <div>Diamonds found: <span id="diamond-counter">0 / 20</span></div>
+      <div id="dog-message"></div>
+    </div>
     <div id="crosshair"></div>
+    <canvas id="confetti-canvas" aria-hidden="true"></canvas>
   </div>
 
   <div class="controls">
     <p>
       <strong>Controls:</strong>
        Use W/A/S/D to move, click canvas to lock mouse, move mouse or use Q/E to look around, Press to Esc unlock mouse,
-      Space to jump, F to add sand, R to dig sand.
+      Space to jump, F to add sand, R to dig sand, <strong> X for CHEAT MODE</strong>
     </p>
  
   </div>

@@ -54,6 +54,12 @@ let g_lastFrameTime = performance.now();
 let g_frameCount = 0;
 let g_fps = 0;
 let g_lastTickTime = performance.now() / 1000.0;
+let g_confettiCanvas;
+let g_confettiContext;
+let g_confettiPieces = [];
+let g_confettiStopTime = 0;
+
+const CONFETTI_COLORS = ["#ff4d4d", "#ffd966", "#66ff99", "#66ccff", "#cc99ff", "#ffffff"];
 
 const WORLD_SIZE = 32;
 const PLAYER_EYE_HEIGHT = 1.75;
@@ -99,6 +105,7 @@ const g_hiddenDiamondHeightMap = createHiddenDiamondHeightMap();
 
 let g_itemsFound = 0;
 let g_gameWon = false;
+let g_cheatMode = false;
 const TOTAL_BURIED_ITEMS = HIDDEN_DIAMOND_COUNT;
 
 function createFilledBooleanMap(value) {
@@ -302,6 +309,7 @@ function main() {
   initConeBuffer();
   initTextures();
   addActionsForHtmlUI();
+  setupConfettiCanvas();
   updateDiamondCounter();
   updateDogMessage("");
 
@@ -701,13 +709,17 @@ function addActionsForHtmlUI() {
       addBlockInFrontOfCamera();
     }
 
-    if (ev.code === "KeyR" && !ev.repeat) {
+    if (ev.code === "KeyR") {
       deleteBlockInFrontOfCamera();
+    }
+
+    if (ev.code === "KeyX" && !ev.repeat) {
+      activateCheatMode();
     }
 
     if ([
       "KeyW", "KeyA", "KeyS", "KeyD",
-      "KeyQ", "KeyE", "KeyF", "KeyR", "Space"
+      "KeyQ", "KeyE", "KeyF", "KeyR", "KeyX", "Space"
     ].includes(ev.code)) {
       ev.preventDefault();
     }
@@ -848,7 +860,13 @@ function getSolidHeightAtCell(cell) {
     return DIAMOND_PERIMETER_HEIGHT;
   }
 
-  return Math.max(g_map[cell.z][cell.x], g_sandHeightMap[cell.z][cell.x]);
+  let solidHeight = Math.max(g_map[cell.z][cell.x], g_sandHeightMap[cell.z][cell.x]);
+
+  if (g_cheatMode && g_hiddenDiamondHeightMap[cell.z][cell.x] >= 0) {
+    solidHeight = Math.max(solidHeight, 1);
+  }
+
+  return solidHeight;
 }
 
 function getGroundHeightAtPosition(worldX, worldZ) {
@@ -894,6 +912,7 @@ function tick() {
   updateAnimationAngles();
   renderScene();
   updateFPS();
+  updateConfetti();
 
   requestAnimationFrame(tick);
 }
@@ -986,29 +1005,88 @@ function worldToMapCell(worldX, worldZ) {
   return { x: mapX, z: mapZ };
 }
 
-function getMapCellInFrontOfCamera() {
+function addUniqueCell(cells, cell) {
+  if (cell === null) {
+    return;
+  }
+
+  for (let i = 0; i < cells.length; i++) {
+    if (cells[i].x === cell.x && cells[i].z === cell.z) {
+      return;
+    }
+  }
+
+  cells.push(cell);
+}
+
+function getMapCellsInFrontOfCamera() {
   let dx = camera.at.elements[0] - camera.eye.elements[0];
   let dz = camera.at.elements[2] - camera.eye.elements[2];
   let length = Math.sqrt(dx * dx + dz * dz);
 
   if (length === 0) {
-    return null;
+    return [];
   }
 
   dx /= length;
   dz /= length;
 
+  const rightX = dz;
+  const rightZ = -dx;
   const currentCell = worldToMapCell(camera.eye.elements[0], camera.eye.elements[2]);
+  const cells = [];
+  const sideOffsets = [0.0, -0.22, 0.22, -0.42, 0.42];
 
-  for (let distance = 0.25; distance <= 3.0; distance += 0.05) {
-    const targetCell = worldToMapCell(camera.eye.elements[0] + dx * distance, camera.eye.elements[2] + dz * distance);
+  for (let side = 0; side < sideOffsets.length; side++) {
+    const sideOffset = sideOffsets[side];
 
-    if (targetCell !== null && (currentCell === null || targetCell.x !== currentCell.x || targetCell.z !== currentCell.z)) {
-      return targetCell;
+    for (let distance = 0.25; distance <= 3.0; distance += 0.05) {
+      const targetCell = worldToMapCell(
+        camera.eye.elements[0] + dx * distance + rightX * sideOffset,
+        camera.eye.elements[2] + dz * distance + rightZ * sideOffset
+      );
+
+      if (targetCell !== null && (currentCell === null || targetCell.x !== currentCell.x || targetCell.z !== currentCell.z)) {
+        addUniqueCell(cells, targetCell);
+      }
     }
   }
 
-  return null;
+  return cells;
+}
+
+function getMapCellInFrontOfCamera() {
+  const cells = getMapCellsInFrontOfCamera();
+  return cells.length > 0 ? cells[0] : null;
+}
+
+function collectHiddenDiamondAtCell(cell) {
+  if (cell === null || g_hiddenDiamondHeightMap[cell.z][cell.x] < 0) {
+    return false;
+  }
+
+  g_itemsFound++;
+  g_hiddenDiamondHeightMap[cell.z][cell.x] = -1;
+  updateDiamondCounter();
+  return true;
+}
+
+function activateCheatMode() {
+  g_cheatMode = true;
+
+  for (let z = 1; z < WORLD_SIZE - 1; z++) {
+    for (let x = 1; x < WORLD_SIZE - 1; x++) {
+      g_sandHeightMap[z][x] = 0;
+    }
+  }
+
+  if (!g_dogFound) {
+    revealDog();
+  } else {
+    updateDogMessage("Cheat mode: all sand removed!");
+  }
+
+  renderScene();
 }
 
 function addBlockInFrontOfCamera() {
@@ -1025,33 +1103,62 @@ function addBlockInFrontOfCamera() {
   renderScene();
 }
 
-function deleteBlockInFrontOfCamera() {
-  const cell = getMapCellInFrontOfCamera();
-
-  if (cell === null) {
-    return;
+function deleteBlockAtCell(cell) {
+  if (cell === null || g_map[cell.z][cell.x] !== 0) {
+    return false;
   }
 
-  if (g_map[cell.z][cell.x] === 0 && g_sandHeightMap[cell.z][cell.x] > 0) {
+  if (g_sandHeightMap[cell.z][cell.x] > 0) {
     const hiddenDiamondY = g_hiddenDiamondHeightMap[cell.z][cell.x];
     const isDiggingExposedDiamond = hiddenDiamondY >= 0 && g_sandHeightMap[cell.z][cell.x] === hiddenDiamondY + 1;
 
     g_sandHeightMap[cell.z][cell.x]--;
 
     if (isDiggingExposedDiamond) {
-      g_itemsFound++;
-      g_hiddenDiamondHeightMap[cell.z][cell.x] = -1;
-      updateDiamondCounter();
+      collectHiddenDiamondAtCell(cell);
     }
 
     checkIfDogFound(cell);
+    return true;
   }
 
-  renderScene();
+  if (g_cheatMode) {
+    return collectHiddenDiamondAtCell(cell);
+  }
+
+  return false;
+}
+
+function deleteBlockInFrontOfCamera() {
+  const cells = getMapCellsInFrontOfCamera();
+
+  for (let i = 0; i < cells.length; i++) {
+    if (deleteBlockAtCell(cells[i])) {
+      renderScene();
+      return;
+    }
+  }
 }
 
 function isDogSearchCell(cell) {
   return Math.abs(cell.x - DOG_MAP_X) <= 1 && Math.abs(cell.z - DOG_MAP_Z) <= 1;
+}
+
+function revealDog() {
+  g_dogFound = true;
+  g_animation = true;
+  g_pokeAnimation = false;
+  g_startTime = performance.now() / 1000.0;
+
+  if (g_sandHeightMap[DOG_MAP_Z] && typeof g_sandHeightMap[DOG_MAP_Z][DOG_MAP_X] === "number") {
+    g_sandHeightMap[DOG_MAP_Z][DOG_MAP_X] = 0;
+  }
+
+  if (!g_gameWon) {
+    updateDogMessage("You found me!");
+  }
+
+  startConfetti();
 }
 
 function checkIfDogFound(cell) {
@@ -1060,18 +1167,7 @@ function checkIfDogFound(cell) {
   }
 
   if (g_sandHeightMap[cell.z][cell.x] <= 1) {
-    g_dogFound = true;
-    g_animation = true;
-    g_pokeAnimation = false;
-    g_startTime = performance.now() / 1000.0;
-
-    if (g_sandHeightMap[DOG_MAP_Z] && typeof g_sandHeightMap[DOG_MAP_Z][DOG_MAP_X] === "number") {
-      g_sandHeightMap[DOG_MAP_Z][DOG_MAP_X] = 0;
-    }
-
-    if (!g_gameWon) {
-      updateDogMessage("You found me!");
-    }
+    revealDog();
   }
 }
 
@@ -1086,6 +1182,7 @@ function updateDiamondCounter() {
   if (shownItemsFound >= TOTAL_BURIED_ITEMS && !g_gameWon) {
     g_gameWon = true;
     updateDogMessage("You win!");
+    startConfetti();
   }
 }
 
@@ -1094,6 +1191,94 @@ function updateDogMessage(message) {
 
   if (messageElement) {
     messageElement.innerText = message;
+  }
+}
+
+function setupConfettiCanvas() {
+  g_confettiCanvas = document.getElementById("confetti-canvas");
+
+  if (!g_confettiCanvas) {
+    return;
+  }
+
+  g_confettiContext = g_confettiCanvas.getContext("2d");
+  resizeConfettiCanvas();
+  window.addEventListener("resize", resizeConfettiCanvas);
+}
+
+function resizeConfettiCanvas() {
+  if (!g_confettiCanvas) {
+    return;
+  }
+
+  g_confettiCanvas.width = window.innerWidth;
+  g_confettiCanvas.height = window.innerHeight;
+}
+
+function startConfetti() {
+  if (!g_confettiCanvas || !g_confettiContext) {
+    setupConfettiCanvas();
+  }
+
+  if (!g_confettiCanvas || !g_confettiContext) {
+    return;
+  }
+
+  resizeConfettiCanvas();
+  g_confettiStopTime = performance.now() + 3000;
+  g_confettiPieces = [];
+
+  for (let i = 0; i < 150; i++) {
+    g_confettiPieces.push({
+      x: Math.random() * g_confettiCanvas.width,
+      y: -20 - Math.random() * g_confettiCanvas.height * 0.35,
+      size: 5 + Math.random() * 7,
+      vx: -2.5 + Math.random() * 5,
+      vy: 2 + Math.random() * 4,
+      rotation: Math.random() * Math.PI * 2,
+      rotationSpeed: -0.2 + Math.random() * 0.4,
+      color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)]
+    });
+  }
+}
+
+function updateConfetti() {
+  if (!g_confettiCanvas || !g_confettiContext || g_confettiPieces.length === 0) {
+    return;
+  }
+
+  const now = performance.now();
+  const width = g_confettiCanvas.width;
+  const height = g_confettiCanvas.height;
+
+  g_confettiContext.clearRect(0, 0, width, height);
+
+  const activePieces = [];
+
+  for (let i = 0; i < g_confettiPieces.length; i++) {
+    const piece = g_confettiPieces[i];
+
+    piece.x += piece.vx;
+    piece.y += piece.vy;
+    piece.vy += 0.04;
+    piece.rotation += piece.rotationSpeed;
+
+    if (now < g_confettiStopTime || piece.y < height + 30) {
+      activePieces.push(piece);
+    }
+
+    g_confettiContext.save();
+    g_confettiContext.translate(piece.x, piece.y);
+    g_confettiContext.rotate(piece.rotation);
+    g_confettiContext.fillStyle = piece.color;
+    g_confettiContext.fillRect(-piece.size / 2, -piece.size / 2, piece.size, piece.size * 0.55);
+    g_confettiContext.restore();
+  }
+
+  g_confettiPieces = activePieces;
+
+  if (g_confettiPieces.length === 0) {
+    g_confettiContext.clearRect(0, 0, width, height);
   }
 }
 
@@ -1127,6 +1312,13 @@ function drawWorld() {
         } else {
           drawTexturedCube(block, [1.0, 1.0, 1.0, 1.0], "sand", 1.0, 1.0);
         }
+      }
+
+      if (g_cheatMode && hiddenDiamondY >= 0) {
+        let diamond = new Matrix4();
+        diamond.translate(worldX, 0, worldZ);
+        diamond.scale(1, 1, 1);
+        drawTexturedCube(diamond, [1.0, 1.0, 1.0, 1.0], "diamond", 1.0, 1.0);
       }
     }
   }
