@@ -16,7 +16,6 @@ let u_UVScale;
 
 let g_textures = {};
 
-// Separate texture units keep wall and grass images from overwriting each other.
 const TEXTURE_UNITS = {
   wall: 0,
   grass: 1,
@@ -25,16 +24,10 @@ const TEXTURE_UNITS = {
 };
 
 const TEXTURE_PATHS = {
-  wall: ["./textures/wall.png", "./textures/wall.jpg", "./wall.png", "./wall.jpg", "textures/wall.png", "textures/wall.jpg", "wall.png", "wall.jpg"],
-
-  // The floor uses grass.jpg. Put grass.jpg beside index.html/main.js,
-  // or put it in a textures folder.
   grass: ["./grass.jpg", "grass.jpg", "./textures/grass.jpg", "textures/grass.jpg", "./grass.png", "grass.png", "./textures/grass.png", "textures/grass.png"],
 
-  // Sand blocks sit on top of the grass floor and can be dug away.
   sand: ["./sand.jpg", "sand.jpg", "./textures/sand.jpg", "textures/sand.jpg", "./sand.png", "sand.png", "./textures/sand.png", "textures/sand.png"],
 
-  // Diamond blocks make the tall perimeter wall around the sand field.
   diamond: ["./diamond.jpg", "diamond.jpg", "./textures/diamond.jpg", "textures/diamond.jpg", "./diamond.png", "diamond.png", "./textures/diamond.png", "textures/diamond.png"]
 };
 
@@ -54,9 +47,10 @@ let g_seconds = 0;
 let g_startTime = performance.now() / 1000.0;
 let g_coneBuffer;
 let g_cubeBuffer;
-let g_isDragging = false;
+let g_hasLastMousePosition = false;
 let g_lastMouseX = 0;
 let g_lastMouseY = 0;
+let g_pointerLocked = false;
 let g_lastFrameTime = performance.now();
 let g_frameCount = 0;
 let g_fps = 0;
@@ -92,24 +86,20 @@ const DIAMOND_PERIMETER_HEIGHT = 8;
 const MAX_SAND_HEIGHT = 4;
 const HIDDEN_DIAMOND_COUNT = 20;
 
-// The dog is hidden under the player's starting spot.
-// Camera starts at world position (2.5, 2.5), so the dog starts there too.
 const DOG_WORLD_X = 2.5;
 const DOG_WORLD_Z = 2.5;
 const DOG_MAP_X = Math.floor(DOG_WORLD_X + WORLD_SIZE / 2);
 const DOG_MAP_Z = Math.floor(DOG_WORLD_Z + WORLD_SIZE / 2);
 let g_dogFound = false;
 
-// Diamond perimeter blocks surround the dig site.
 const g_map = createDiamondPerimeterMap();
 
-// Sand stacks are 3-4 blocks tall on top of the grass floor.
 const g_sandHeightMap = createSandHeightMap();
 
-// Each non-negative value is the buried diamond block's y-level in that sand stack.
 const g_hiddenDiamondHeightMap = createHiddenDiamondHeightMap();
 
 let g_itemsFound = 0;
+let g_gameWon = false;
 const TOTAL_BURIED_ITEMS = HIDDEN_DIAMOND_COUNT;
 
 function createFilledBooleanMap(value) {
@@ -150,6 +140,37 @@ function createDiamondPerimeterMap() {
   return map;
 }
 
+function randomHash2D(x, z) {
+  let n = (x * 374761393 + z * 668265263) ^ (x * z * 1442695041);
+  n = (n ^ (n >> 13)) * 1274126177;
+  n = n ^ (n >> 16);
+  return ((n >>> 0) % 10000) / 10000;
+}
+
+function smoothStep(t) {
+  return t * t * (3.0 - 2.0 * t);
+}
+
+function smoothNoise2D(x, z, scale) {
+  const sx = x / scale;
+  const sz = z / scale;
+  const x0 = Math.floor(sx);
+  const z0 = Math.floor(sz);
+  const x1 = x0 + 1;
+  const z1 = z0 + 1;
+  const tx = smoothStep(sx - x0);
+  const tz = smoothStep(sz - z0);
+
+  const a = randomHash2D(x0, z0);
+  const b = randomHash2D(x1, z0);
+  const c = randomHash2D(x0, z1);
+  const d = randomHash2D(x1, z1);
+
+  const top = a + (b - a) * tx;
+  const bottom = c + (d - c) * tx;
+  return top + (bottom - top) * tz;
+}
+
 function createSandHeightMap() {
   const map = [];
 
@@ -159,9 +180,20 @@ function createSandHeightMap() {
     for (let x = 0; x < WORLD_SIZE; x++) {
       let height = 0;
 
-      // Leave the diamond perimeter empty; the tall diamond wall goes there.
       if (x > 0 && z > 0 && x < WORLD_SIZE - 1 && z < WORLD_SIZE - 1) {
-        height = 3 + ((x * 17 + z * 11) % 2); // 3 or 4 blocks tall
+
+        const broadPatch = smoothNoise2D(x + 13, z + 29, 7.0);
+        const smallPatch = smoothNoise2D(x + 101, z + 53, 3.0);
+        const speckle = randomHash2D(x + 200, z + 400);
+        const value = broadPatch * 0.58 + smallPatch * 0.30 + speckle * 0.12;
+
+        if (value < 0.20) {
+          height = 2;
+        } else if (value < 0.63) {
+          height = 3;
+        } else {
+          height = 4;
+        }
       }
 
       row.push(height);
@@ -176,7 +208,6 @@ function createSandHeightMap() {
 function createTreasureMap() {
   const map = createFilledBooleanMap(false);
 
-  // Kept for compatibility with older versions of the project.
   return map;
 }
 
@@ -202,12 +233,10 @@ function createHiddenDiamondHeightMap() {
     const x = 1 + Math.floor(Math.random() * (WORLD_SIZE - 2));
     const z = 1 + Math.floor(Math.random() * (WORLD_SIZE - 2));
 
-    // Keep the starting area around the player mostly normal, so the spawn is readable.
     if (x >= 15 && x <= 21 && z >= 15 && z <= 21) {
       continue;
     }
 
-    // Do not place a diamond in the same little area as the hidden dog.
     if (Math.abs(x - DOG_MAP_X) <= 1 && Math.abs(z - DOG_MAP_Z) <= 1) {
       continue;
     }
@@ -222,7 +251,6 @@ function createHiddenDiamondHeightMap() {
       continue;
     }
 
-    // Hide the diamond under at least one sand block, but not all the way at bedrock.
     let hiddenY = sandHeight - 2;
 
     if (sandHeight === 4 && Math.random() < 0.5) {
@@ -305,7 +333,6 @@ function connectVariablesToGLSL() {
   a_UV = gl.getAttribLocation(gl.program, "a_UV");
 
   u_ModelMatrix = gl.getUniformLocation(gl.program, "u_ModelMatrix");
- // u_GlobalRotation = gl.getUniformLocation(gl.program, "u_GlobalRotation");
   u_ViewMatrix = gl.getUniformLocation(gl.program, "u_ViewMatrix");
   u_ProjectionMatrix = gl.getUniformLocation(gl.program, "u_ProjectionMatrix");
   u_Color = gl.getUniformLocation(gl.program, "u_Color");
@@ -323,25 +350,13 @@ function connectVariablesToGLSL() {
 
 let identity = new Matrix4();
 gl.uniformMatrix4fv(u_ModelMatrix, false, identity.elements);
-//gl.uniformMatrix4fv(u_GlobalRotation, false, identity.elements);
 
-// Step 5: View matrix = where the camera is looking from
 let viewMatrix = new Matrix4();
-viewMatrix.setLookAt(
-  0, 0, 5,   // eye: camera position
-  0, 0, 0,   // at: where camera looks
-  0, 1, 0    // up direction
-);
+viewMatrix.setLookAt(0, 0, 5, 0, 0, 0, 0, 1, 0);
 gl.uniformMatrix4fv(u_ViewMatrix, false, viewMatrix.elements);
 
-// Step 5: Projection matrix = perspective camera
 let projectionMatrix = new Matrix4();
-projectionMatrix.setPerspective(
-  60,                           // field of view
-  canvas.width / canvas.height,  // aspect ratio
-  0.1,                          // near clipping plane
-  1000                          // far clipping plane
-);
+projectionMatrix.setPerspective(60, canvas.width / canvas.height, 0.1, 1000);
 gl.uniformMatrix4fv(u_ProjectionMatrix, false, projectionMatrix.elements);
 
 gl.uniform1i(u_Sampler0, 0);
@@ -357,65 +372,25 @@ function initCubeBuffer() {
   }
 
   function pushQuad(bottomLeft, bottomRight, topRight, topLeft) {
-    // Each face gets the same clean square UV layout. This avoids the odd
-    // mirrored/diagonal-looking texture seams that happened when some cube
-    // faces used a different vertex order.
-    pushVertex(bottomLeft,  [0, 0]);
-    pushVertex(bottomRight, [1, 0]);
-    pushVertex(topRight,    [1, 1]);
-
-    pushVertex(bottomLeft,  [0, 0]);
-    pushVertex(topRight,    [1, 1]);
-    pushVertex(topLeft,     [0, 1]);
+    pushVertex(bottomLeft,[0, 0]);
+    pushVertex(bottomRight,[1, 0]);
+    pushVertex(topRight,[1, 1]);
+    pushVertex(bottomLeft,[0, 0]);
+    pushVertex(topRight,[1, 1]);
+    pushVertex(topLeft,[0, 1]);
   }
 
-  // Front: z = +0.5
-  pushQuad(
-    [-0.5, -0.5,  0.5],
-    [ 0.5, -0.5,  0.5],
-    [ 0.5,  0.5,  0.5],
-    [-0.5,  0.5,  0.5]
-  );
+  pushQuad([-0.5, -0.5, 0.5], [ 0.5, -0.5, 0.5], [ 0.5, 0.5, 0.5], [-0.5, 0.5, 0.5]);
 
-  // Back: z = -0.5
-  pushQuad(
-    [ 0.5, -0.5, -0.5],
-    [-0.5, -0.5, -0.5],
-    [-0.5,  0.5, -0.5],
-    [ 0.5,  0.5, -0.5]
-  );
+  pushQuad([ 0.5, -0.5, -0.5],[-0.5, -0.5, -0.5],[-0.5, 0.5, -0.5], [ 0.5, 0.5, -0.5]);
 
-  // Left: x = -0.5
-  pushQuad(
-    [-0.5, -0.5, -0.5],
-    [-0.5, -0.5,  0.5],
-    [-0.5,  0.5,  0.5],
-    [-0.5,  0.5, -0.5]
-  );
+  pushQuad([-0.5, -0.5, -0.5],[-0.5, -0.5, 0.5],[-0.5, 0.5, 0.5],[-0.5, 0.5, -0.5]);
 
-  // Right: x = +0.5
-  pushQuad(
-    [0.5, -0.5,  0.5],
-    [0.5, -0.5, -0.5],
-    [0.5,  0.5, -0.5],
-    [0.5,  0.5,  0.5]
-  );
+  pushQuad([0.5, -0.5, 0.5],[0.5, -0.5, -0.5],[0.5, 0.5, -0.5],[0.5, 0.5, 0.5]);
 
-  // Top: y = +0.5
-  pushQuad(
-    [-0.5, 0.5,  0.5],
-    [ 0.5, 0.5,  0.5],
-    [ 0.5, 0.5, -0.5],
-    [-0.5, 0.5, -0.5]
-  );
+  pushQuad([-0.5, 0.5, 0.5],[ 0.5, 0.5, 0.5],[ 0.5, 0.5, -0.5],[-0.5, 0.5, -0.5]);
 
-  // Bottom: y = -0.5
-  pushQuad(
-    [-0.5, -0.5, -0.5],
-    [ 0.5, -0.5, -0.5],
-    [ 0.5, -0.5,  0.5],
-    [-0.5, -0.5,  0.5]
-  );
+  pushQuad([-0.5, -0.5, -0.5],[ 0.5, -0.5, -0.5],[ 0.5, -0.5, 0.5],[-0.5, -0.5, 0.5]);
 
   g_cubeBuffer = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, g_cubeBuffer);
@@ -423,45 +398,11 @@ function initCubeBuffer() {
 }
 
 function initTextures() {
-  createTextureWithFallback(
-    "wall",
-    [
-      170, 170, 170, 255,
-      90, 90, 90, 255,
-      90, 90, 90, 255,
-      170, 170, 170, 255
-    ]
-  );
+  createTextureWithFallback("grass",[75, 150, 60, 255,45, 110, 35, 255,45, 110, 35, 255,75, 150, 60, 255]);
 
-  createTextureWithFallback(
-    "grass",
-    [
-      75, 150, 60, 255,
-      45, 110, 35, 255,
-      45, 110, 35, 255,
-      75, 150, 60, 255
-    ]
-  );
+  createTextureWithFallback("sand",[214, 190, 130, 255,191, 166, 105, 255,226, 205, 149, 255,174, 148, 91, 255]);
 
-  createTextureWithFallback(
-    "sand",
-    [
-      214, 190, 130, 255,
-      191, 166, 105, 255,
-      226, 205, 149, 255,
-      174, 148, 91, 255
-    ]
-  );
-
-  createTextureWithFallback(
-    "diamond",
-    [
-      115, 235, 255, 255,
-      20, 130, 180, 255,
-      50, 190, 225, 255,
-      210, 255, 255, 255
-    ]
-  );
+  createTextureWithFallback("diamond",[115, 235, 255, 255,20, 130, 180, 255,50, 190, 225, 255,210, 255, 255, 255]);
 
   bindTexture("wall");
 
@@ -495,17 +436,7 @@ function createTextureWithFallback(textureName, pixels) {
   gl.activeTexture(gl.TEXTURE0 + unit);
   gl.bindTexture(gl.TEXTURE_2D, texture);
 
-  gl.texImage2D(
-    gl.TEXTURE_2D,
-    0,
-    gl.RGBA,
-    2,
-    2,
-    0,
-    gl.RGBA,
-    gl.UNSIGNED_BYTE,
-    new Uint8Array(pixels)
-  );
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,2,2,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array(pixels));
 
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
@@ -555,9 +486,6 @@ function getTextureUploadSource(image, texturePath) {
     return image;
   }
 
-  // WebGL 1 cannot repeat non-power-of-two images. Resize into a temporary
-  // power-of-two canvas so grass.jpg can tile across the floor instead of
-  // stretching once across the entire world.
   const canvasTexture = document.createElement("canvas");
   canvasTexture.width = nextPowerOfTwo(image.width);
   canvasTexture.height = nextPowerOfTwo(image.height);
@@ -590,14 +518,7 @@ function loadTexture(textureName, image, texturePath) {
   gl.activeTexture(gl.TEXTURE0 + unit);
   gl.bindTexture(gl.TEXTURE_2D, texture);
 
-  gl.texImage2D(
-    gl.TEXTURE_2D,
-    0,
-    gl.RGBA,
-    gl.RGBA,
-    gl.UNSIGNED_BYTE,
-    source
-  );
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
 
   gl.generateMipmap(gl.TEXTURE_2D);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
@@ -639,17 +560,9 @@ function initConeBuffer() {
     let x2 = Math.cos(angle2) * 0.5;
     let z2 = Math.sin(angle2) * 0.5;
 
-    vertices.push(
-      tip[0], tip[1], tip[2],
-      x1, -0.5, z1,
-      x2, -0.5, z2
-    );
+    vertices.push(tip[0], tip[1], tip[2],x1, -0.5, z1, x2, -0.5, z2);
 
-    vertices.push(
-      center[0], center[1], center[2],
-      x2, -0.5, z2,
-      x1, -0.5, z1
-    );
+    vertices.push(center[0], center[1], center[2], x2, -0.5, z2, x1, -0.5, z1);
   }
 
   g_coneVertexCount = vertices.length / 3;
@@ -658,39 +571,123 @@ function initConeBuffer() {
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
 }
 
+function isPointerLockSupported() {
+  return (
+    "pointerLockElement" in document ||
+    "mozPointerLockElement" in document
+  );
+}
+
+function isCanvasPointerLocked() {
+  return (
+    document.pointerLockElement === canvas ||
+    document.mozPointerLockElement === canvas
+  );
+}
+
+function requestCanvasPointerLock() {
+  if (!canvas || !isPointerLockSupported()) {
+    return;
+  }
+
+  const requestPointerLock = canvas.requestPointerLock || canvas.mozRequestPointerLock;
+
+  if (requestPointerLock) {
+    requestPointerLock.call(canvas);
+  }
+}
+
+function updatePointerLockStatus() {
+  g_pointerLocked = isCanvasPointerLocked();
+  g_hasLastMousePosition = false;
+
+  const statusElement = document.getElementById("pointer-lock-status");
+
+  if (!statusElement) {
+    return;
+  }
+
+  if (!isPointerLockSupported()) {
+    statusElement.innerText = "Pointer lock is not supported in this browser, so mouse look uses canvas movement only.";
+  } else if (g_pointerLocked) {
+    statusElement.innerText = "Mouse locked. Move the mouse to look around. Press Esc to unlock.";
+  } else {
+    statusElement.innerText = "Click the canvas to lock the mouse.";
+  }
+}
+
+function onMove(ev) {
+  if (!camera) {
+    return;
+  }
+
+  if (isCanvasPointerLocked()) {
+    const dx = ev.movementX || ev.mozMovementX || ev.webkitMovementX || 0;
+    const dy = ev.movementY || ev.mozMovementY || ev.webkitMovementY || 0;
+
+    if (dx !== 0 || dy !== 0) {
+      camera.rotateWithMouse(dx, dy);
+      renderScene();
+    }
+
+    return;
+  }
+
+  if (!isPointerLockSupported()) {
+    if (!g_hasLastMousePosition) {
+      g_lastMouseX = ev.clientX;
+      g_lastMouseY = ev.clientY;
+      g_hasLastMousePosition = true;
+      return;
+    }
+
+    const dx = ev.clientX - g_lastMouseX;
+    const dy = ev.clientY - g_lastMouseY;
+
+    g_lastMouseX = ev.clientX;
+    g_lastMouseY = ev.clientY;
+
+    if (dx !== 0 || dy !== 0) {
+      camera.rotateWithMouse(dx, dy);
+      renderScene();
+    }
+  }
+}
+
 function addActionsForHtmlUI() {
+  updatePointerLockStatus();
+
   canvas.addEventListener("mousedown", function (ev) {
     if (ev.shiftKey) {
       g_pokeAnimation = true;
       g_startTime = performance.now() / 1000.0;
-    } else {
-      g_isDragging = true;
-      g_lastMouseX = ev.clientX;
-      g_lastMouseY = ev.clientY;
     }
+
+    requestCanvasPointerLock();
   });
 
-  canvas.addEventListener("mousemove", function (ev) {
-    if (g_isDragging) {
-      let dx = ev.clientX - g_lastMouseX;
-      let dy = ev.clientY - g_lastMouseY;
-
-      camera.rotateWithMouse(dx, dy);
-
-      g_lastMouseX = ev.clientX;
-      g_lastMouseY = ev.clientY;
-
-      renderScene();
-    }
+  canvas.addEventListener("click", function () {
+    requestCanvasPointerLock();
   });
 
-  canvas.addEventListener("mouseup", function () {
-    g_isDragging = false;
+  canvas.addEventListener("mousemove", onMove);
+
+  canvas.addEventListener("mouseenter", function (ev) {
+    g_lastMouseX = ev.clientX;
+    g_lastMouseY = ev.clientY;
+    g_hasLastMousePosition = true;
   });
 
   canvas.addEventListener("mouseleave", function () {
-    g_isDragging = false;
+    if (!isCanvasPointerLocked()) {
+      g_hasLastMousePosition = false;
+    }
   });
+
+  document.addEventListener("pointerlockchange", updatePointerLockStatus);
+  document.addEventListener("mozpointerlockchange", updatePointerLockStatus);
+  document.addEventListener("pointerlockerror", updatePointerLockStatus);
+  document.addEventListener("mozpointerlockerror", updatePointerLockStatus);
 
   document.addEventListener("keydown", function (ev) {
     if (ev.code === "Space") {
@@ -777,13 +774,11 @@ function updatePlayerPhysics(deltaSeconds) {
   const groundHeight = getGroundHeightAtPosition(camera.eye.elements[0], camera.eye.elements[2]);
   const targetEyeY = groundHeight + PLAYER_EYE_HEIGHT;
 
-  // If the player walked off a block, start falling instead of floating.
   if (g_playerOnGround && camera.eye.elements[1] > targetEyeY + 0.02) {
     g_playerOnGround = false;
     g_playerVerticalVelocity = 0.0;
   }
 
-  // If the ground moved up under the player because they landed on a block, snap to it.
   if (g_playerOnGround && camera.eye.elements[1] < targetEyeY) {
     moveCameraY(targetEyeY - camera.eye.elements[1]);
     g_playerVerticalVelocity = 0.0;
@@ -815,7 +810,6 @@ function moveCameraY(dy) {
 }
 
 function moveCameraWithCollision(dx, dz) {
-  // Split movement into small chunks so a low frame rate cannot skip through a wall.
   const maxStep = 0.08;
   const totalDistance = Math.sqrt(dx * dx + dz * dz);
   const steps = Math.max(1, Math.ceil(totalDistance / maxStep));
@@ -833,8 +827,6 @@ function moveCameraWithCollision(dx, dz) {
 function moveCameraCollisionStep(dx, dz) {
   const eye = camera.eye.elements;
 
-  // Test X and Z separately. This lets the player slide along walls instead of
-  // getting stuck when walking diagonally into one.
   if (isPlayerPositionWalkable(eye[0] + dx, eye[2])) {
     eye[0] += dx;
     camera.at.elements[0] += dx;
@@ -875,17 +867,12 @@ function isPlayerPositionWalkable(worldX, worldZ) {
     const offset = COLLISION_SAMPLE_OFFSETS[i];
     const cell = worldToMapCell(worldX + offset[0], worldZ + offset[1]);
 
-    // Treat outside the map like a wall, so the player cannot leave the world.
     if (cell === null) {
       return false;
     }
 
     const solidHeight = getSolidHeightAtCell(cell);
 
-    // Height-aware collision:
-    // - On the grass floor, a 1-block wall still blocks you.
-    // - While jumping, once your feet are above that 1-block top, you can pass over it.
-    // - Taller sand stacks and the diamond perimeter still block you until you are above them.
     if (solidHeight > feetY + PLAYER_STEP_CLEARANCE) {
       return false;
     }
@@ -936,7 +923,6 @@ function drawCone(matrix, color) {
   gl.vertexAttribPointer(a_Position, 3, gl.FLOAT, false, 0, 0);
   gl.enableVertexAttribArray(a_Position);
 
-  // The cone does not have real UVs yet, so give it one default UV value.
   gl.disableVertexAttribArray(a_UV);
   gl.vertexAttrib2f(a_UV, 0.0, 0.0);
 
@@ -952,7 +938,6 @@ function drawCube(matrix, color, texColorWeight = 0.0, textureName = "wall", uvS
 
   const FSIZE = Float32Array.BYTES_PER_ELEMENT;
 
-  // Each cube vertex has 5 numbers: x, y, z, u, v.
   gl.vertexAttribPointer(a_Position, 3, gl.FLOAT, false, FSIZE * 5, 0);
   gl.enableVertexAttribArray(a_Position);
 
@@ -966,13 +951,11 @@ function drawCube(matrix, color, texColorWeight = 0.0, textureName = "wall", uvS
   gl.uniformMatrix4fv(u_ModelMatrix, false, matrix.elements);
   gl.uniform4fv(u_Color, color);
 
-  // Step 4: choose how much texture to use.
   gl.uniform1f(u_TexColorWeight, texColorWeight);
   gl.uniform2f(u_UVScale, uvScaleX, uvScaleY);
 
   gl.drawArrays(gl.TRIANGLES, 0, 36);
 
-  // Reset so colored shapes and the animal do not inherit tiled UVs.
   gl.uniform2f(u_UVScale, 1.0, 1.0);
 }
 
@@ -1016,18 +999,10 @@ function getMapCellInFrontOfCamera() {
 
   const currentCell = worldToMapCell(camera.eye.elements[0], camera.eye.elements[2]);
 
-  // Step along a short ray and return the first map square in front of the player,
-  // instead of jumping two full blocks ahead and often editing the wrong square.
   for (let distance = 0.25; distance <= 3.0; distance += 0.05) {
-    const targetCell = worldToMapCell(
-      camera.eye.elements[0] + dx * distance,
-      camera.eye.elements[2] + dz * distance
-    );
+    const targetCell = worldToMapCell(camera.eye.elements[0] + dx * distance, camera.eye.elements[2] + dz * distance);
 
-    if (
-      targetCell !== null &&
-      (currentCell === null || targetCell.x !== currentCell.x || targetCell.z !== currentCell.z)
-    ) {
+    if (targetCell !== null && (currentCell === null || targetCell.x !== currentCell.x || targetCell.z !== currentCell.z)) {
       return targetCell;
     }
   }
@@ -1083,9 +1058,6 @@ function checkIfDogFound(cell) {
     return;
   }
 
-  // The dog is buried under the player spawn area. Once the nearby sand is
-  // mostly cleared, reveal it, clear its own cell, start the animation,
-  // and show the message.
   if (g_sandHeightMap[cell.z][cell.x] <= 1) {
     g_dogFound = true;
     g_animation = true;
@@ -1096,15 +1068,23 @@ function checkIfDogFound(cell) {
       g_sandHeightMap[DOG_MAP_Z][DOG_MAP_X] = 0;
     }
 
-    updateDogMessage("You found me!");
+    if (!g_gameWon) {
+      updateDogMessage("You found me!");
+    }
   }
 }
 
 function updateDiamondCounter() {
   const counterElement = document.getElementById("diamond-counter");
+  const shownItemsFound = Math.min(g_itemsFound, TOTAL_BURIED_ITEMS);
 
   if (counterElement) {
-    counterElement.innerText = g_itemsFound + " / " + TOTAL_BURIED_ITEMS;
+    counterElement.innerText = shownItemsFound + " / " + TOTAL_BURIED_ITEMS;
+  }
+
+  if (shownItemsFound >= TOTAL_BURIED_ITEMS && !g_gameWon) {
+    g_gameWon = true;
+    updateDogMessage("You win!");
   }
 }
 
@@ -1117,13 +1097,11 @@ function updateDogMessage(message) {
 }
 
 function drawWorld() {
-  // Step 9: sky box
   let sky = new Matrix4();
   sky.translate(0, 20, 0);
   sky.scale(1000, 1000, 1000);
   drawColoredCube(sky, [0.45, 0.75, 1.0, 1.0]);
 
-  // Grass floor stays underneath the dig area. Sand blocks sit on top of it.
   for (let z = 0; z < WORLD_SIZE; z++) {
     for (let x = 0; x < WORLD_SIZE; x++) {
       const worldX = x - WORLD_SIZE / 2 + 0.5;
@@ -1152,18 +1130,13 @@ function drawWorld() {
     }
   }
 
-  // Tall diamond wall around the perimeter of the dig site.
   for (let z = 0; z < WORLD_SIZE; z++) {
     for (let x = 0; x < WORLD_SIZE; x++) {
       let height = g_map[z][x];
 
       for (let y = 0; y < height; y++) {
         let diamond = new Matrix4();
-        diamond.translate(
-          x - WORLD_SIZE / 2 + 0.5,
-          y,
-          z - WORLD_SIZE / 2 + 0.5
-        );
+        diamond.translate(x - WORLD_SIZE / 2 + 0.5, y, z - WORLD_SIZE / 2 + 0.5);
         diamond.scale(1, 1, 1);
         drawTexturedCube(diamond, [1.0, 1.0, 1.0, 1.0], "diamond", 1.0, 1.0);
       }
@@ -1190,7 +1163,6 @@ function makeDogMatrix(baseX, baseY, baseZ) {
 }
 
 function drawDog() {
-  // The dog appears after you dig it out. It is lowered so its feet sit on the sand/grass.
   const dogX = DOG_WORLD_X;
   const dogZ = DOG_WORLD_Z;
   const dogY = getGroundHeightAtPosition(dogX, dogZ) + 0.45;
@@ -1242,9 +1214,9 @@ function drawDog() {
   drawCone(tail, [0.45, 0.25, 0.12, 1]);
 
   drawLeg(-0.45, -0.35, 0.25, -gLegAngle, -gCalfAngle, -gFootAngle, dogX, dogY, dogZ);
-  drawLeg( 0.45, -0.35, 0.25,  gLegAngle,  gCalfAngle,  gFootAngle, dogX, dogY, dogZ);
+  drawLeg( 0.45, -0.35, 0.25, gLegAngle, gCalfAngle, gFootAngle, dogX, dogY, dogZ);
 
-  drawLeg(-0.45, -0.35, -0.25,  gLegAngle,  gCalfAngle,  gFootAngle, dogX, dogY, dogZ);
+  drawLeg(-0.45, -0.35, -0.25, gLegAngle, gCalfAngle, gFootAngle, dogX, dogY, dogZ);
   drawLeg( 0.45, -0.35, -0.25, -gLegAngle, -gCalfAngle, -gFootAngle, dogX, dogY, dogZ);
 }
 

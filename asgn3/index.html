@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Sydney Chien Assignment 4 Diggy World</title>
+  <title>Sydney Chien Assignment 3 Diggy World</title>
 
   <style>
     body {
@@ -55,19 +55,52 @@
     .controls {
       margin-top: 12px;
     }
+
+    .game-intro {
+      max-width: 720px;
+      margin: 0 auto 12px auto;
+      padding: 10px 14px;
+      background: white;
+      border: 1px solid #cccccc;
+      text-align: left;
+      line-height: 1.4;
+    }
+
+    .game-intro h3 {
+      margin-top: 0;
+      margin-bottom: 6px;
+      text-align: center;
+    }
+
+    .game-intro p {
+      margin: 6px 0;
+    }
+
+    #pointer-lock-status {
+      font-weight: bold;
+    }
   </style>
 </head>
 
 <body onload="main()">
 
-  <h2>Sydney Chien Assignment 4 Diggy World</h2>
+  <h2>Sydney Chien Assignment 3: Diggy World</h2>
   <p>sjchien@ucsc.edu</p>
-  <p id="fps">FPS: -</p>
-      <p>Diamonds found: <span id="diamond-counter">0 / 20</span>    <p id="dog-message"></p></p>
 
+  <div class="game-intro">
+    <h3>Game Intro</h3>
+    <p><strong>Goal:</strong> Explore the 32x32 dig site, dig through sand, and uncover all 20 hidden diamond blocks.</p>
+    <p><strong>Story:</strong> Your dog is buried somewhere near the starting area. Dig carefully, find your dog, then keep mining until the counter reaches 20 / 20. When all diamonds are found, the game says <strong>You win!</strong></p>
+    <p><strong>Mouse:</strong> Click the canvas to lock the mouse to the game. Move the mouse to look around. Press Esc to unlock.</p>
+  </div>
+
+  <p id="fps">FPS: -</p>
+  <p>Diamonds found: <span id="diamond-counter">0 / 20</span></p>
+  <p id="dog-message"></p>
+  <p id="pointer-lock-status">Click the canvas to lock the mouse for FPS-style camera controls.</p>
 
   <div class="canvas-wrap">
-    <canvas id="webgl" width="600" height="600">
+    <canvas id="webgl" width="800" height="800">
       Please use a browser that supports canvas.
     </canvas>
     <div id="crosshair"></div>
@@ -75,7 +108,9 @@
 
   <div class="controls">
     <p>
-        WASD to move, Space to jump over 1-block ledges, QE turn, F add sand, R dig sand
+      <strong>Controls:</strong>
+       Use W/A/S/D to move, click canvas to lock mouse, move mouse or use Q/E to look around, Press to Esc unlock mouse,
+      Space to jump, F to add sand, R to dig sand.
     </p>
  
   </div>
