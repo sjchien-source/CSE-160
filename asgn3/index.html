@@ -2,12 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Sydney Chien Assignment 4</title>
+  <title>Sydney Chien Assignment 4 Diggy World</title>
 
   <style>
     body {
       text-align: center;
-      font-family: Arial, sans-serif;
       background-color: #eeeeee;
     }
 
@@ -61,9 +60,11 @@
 
 <body onload="main()">
 
-  <h2>Sydney Chien Assignment 4</h2>
+  <h2>Sydney Chien Assignment 4 Diggy World</h2>
   <p>sjchien@ucsc.edu</p>
   <p id="fps">FPS: -</p>
+      <p>Diamonds found: <span id="diamond-counter">0 / 20</span>    <p id="dog-message"></p></p>
+
 
   <div class="canvas-wrap">
     <canvas id="webgl" width="600" height="600">
@@ -74,9 +75,9 @@
 
   <div class="controls">
     <p>
-        WASD to move, Space to jump, QE turn, F add block, R remove block
+        WASD to move, Space to jump over 1-block ledges, QE turn, F add sand, R dig sand
     </p>
-
+ 
   </div>
 
 <script src="./lib/cuon-utils.js"></script>

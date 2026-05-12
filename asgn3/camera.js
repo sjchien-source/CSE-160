@@ -7,8 +7,9 @@ class Camera {
     this.fov = 60.0;
 
     // Good starting position for the world
-    this.eye = new Vector3([2.5, 1.75, 2.5]);
-    this.at = new Vector3([3.5, 1.75, 2.5]);
+    // Spawn on top of the sand stack at world position (2.5, 2.5).
+    this.eye = new Vector3([2.5, 4.75, 2.5]);
+    this.at = new Vector3([3.5, 4.75, 2.5]);
     this.up = new Vector3([0, 1, 0]);
 
     this.yaw = 0.0;

@@ -19,13 +19,23 @@ let g_textures = {};
 // Separate texture units keep wall and grass images from overwriting each other.
 const TEXTURE_UNITS = {
   wall: 0,
-  grass: 1
+  grass: 1,
+  sand: 2,
+  diamond: 3
 };
 
 const TEXTURE_PATHS = {
   wall: ["./textures/wall.png", "./textures/wall.jpg", "./wall.png", "./wall.jpg", "textures/wall.png", "textures/wall.jpg", "wall.png", "wall.jpg"],
 
-  grass: ["./grass.jpg", "grass.jpg", "./textures/grass.jpg", "textures/grass.jpg", "./grass.png", "grass.png", "./textures/grass.png", "textures/grass.png"]
+  // The floor uses grass.jpg. Put grass.jpg beside index.html/main.js,
+  // or put it in a textures folder.
+  grass: ["./grass.jpg", "grass.jpg", "./textures/grass.jpg", "textures/grass.jpg", "./grass.png", "grass.png", "./textures/grass.png", "textures/grass.png"],
+
+  // Sand blocks sit on top of the grass floor and can be dug away.
+  sand: ["./sand.jpg", "sand.jpg", "./textures/sand.jpg", "textures/sand.jpg", "./sand.png", "sand.png", "./textures/sand.png", "textures/sand.png"],
+
+  // Diamond blocks make the tall perimeter wall around the sand field.
+  diamond: ["./diamond.jpg", "diamond.jpg", "./textures/diamond.jpg", "textures/diamond.jpg", "./diamond.png", "diamond.png", "./textures/diamond.png", "textures/diamond.png"]
 };
 
 let gAnimalGlobalRotation = 0;
@@ -57,6 +67,7 @@ const PLAYER_EYE_HEIGHT = 1.75;
 const PLAYER_GROUND_Y = 0.0;
 const PLAYER_GROUND_EYE_Y = PLAYER_GROUND_Y + PLAYER_EYE_HEIGHT;
 const PLAYER_RADIUS = 0.28;
+const PLAYER_STEP_CLEARANCE = 0.08;
 const PLAYER_MOVE_SPEED = 6.0;
 const PLAYER_JUMP_SPEED = 6.5;
 const PLAYER_GRAVITY = -18.0;
@@ -77,40 +88,153 @@ const COLLISION_SAMPLE_OFFSETS = [
 ];
 
 
-const g_map = [
-  "44444444444444444444444444444444",
-  "40000000000000000000000000000004",
-  "40002222200000000011110000000004",
-  "40000000200000000010010000000004",
-  "40000000200033300010010000000004",
-  "40001111200030300010011111100004",
-  "40001000000030300010000000100004",
-  "40001000000033300011111100100004",
-  "40001000000000000000000100100004",
-  "40001111111110000000000100100004",
-  "40000000000010002222200100100004",
-  "40000033300010002000200100100004",
-  "40000030300010002000200100100004",
-  "40000033300011112000200100100004",
-  "40000000000000000000200100000004",
-  "40000000001111111111200111111004",
-  "40000000001000000000000000001004",
-  "40022220001000033333330000001004",
-  "40020020001111030000030011111004",
-  "40020020000001030333030010000004",
-  "40022220000001030003030010000004",
-  "40000000000001033333030010000004",
-  "40001111100001000000030010000004",
-  "40001000100001111111110011100004",
-  "40001000100000000000000000100004",
-  "40001000111111111110000000100004",
-  "40001000000000000010002222100004",
-  "40001111111110000010002000100004",
-  "40000000000010000011112000100004",
-  "40000000000011110000000000100004",
-  "40000000000000000000000000000004",
-  "44444444444444444444444444444444"
-].map(row => row.split("").map(Number));
+const DIAMOND_PERIMETER_HEIGHT = 8;
+const MAX_SAND_HEIGHT = 4;
+const HIDDEN_DIAMOND_COUNT = 20;
+
+// The dog is hidden under the player's starting spot.
+// Camera starts at world position (2.5, 2.5), so the dog starts there too.
+const DOG_WORLD_X = 2.5;
+const DOG_WORLD_Z = 2.5;
+const DOG_MAP_X = Math.floor(DOG_WORLD_X + WORLD_SIZE / 2);
+const DOG_MAP_Z = Math.floor(DOG_WORLD_Z + WORLD_SIZE / 2);
+let g_dogFound = false;
+
+// Diamond perimeter blocks surround the dig site.
+const g_map = createDiamondPerimeterMap();
+
+// Sand stacks are 3-4 blocks tall on top of the grass floor.
+const g_sandHeightMap = createSandHeightMap();
+
+// Each non-negative value is the buried diamond block's y-level in that sand stack.
+const g_hiddenDiamondHeightMap = createHiddenDiamondHeightMap();
+
+let g_itemsFound = 0;
+const TOTAL_BURIED_ITEMS = HIDDEN_DIAMOND_COUNT;
+
+function createFilledBooleanMap(value) {
+  const map = [];
+
+  for (let z = 0; z < WORLD_SIZE; z++) {
+    const row = [];
+
+    for (let x = 0; x < WORLD_SIZE; x++) {
+      row.push(value);
+    }
+
+    map.push(row);
+  }
+
+  return map;
+}
+
+function createDiamondPerimeterMap() {
+  const map = [];
+
+  for (let z = 0; z < WORLD_SIZE; z++) {
+    const row = [];
+
+    for (let x = 0; x < WORLD_SIZE; x++) {
+      let height = 0;
+
+      if (x === 0 || z === 0 || x === WORLD_SIZE - 1 || z === WORLD_SIZE - 1) {
+        height = DIAMOND_PERIMETER_HEIGHT;
+      }
+
+      row.push(height);
+    }
+
+    map.push(row);
+  }
+
+  return map;
+}
+
+function createSandHeightMap() {
+  const map = [];
+
+  for (let z = 0; z < WORLD_SIZE; z++) {
+    const row = [];
+
+    for (let x = 0; x < WORLD_SIZE; x++) {
+      let height = 0;
+
+      // Leave the diamond perimeter empty; the tall diamond wall goes there.
+      if (x > 0 && z > 0 && x < WORLD_SIZE - 1 && z < WORLD_SIZE - 1) {
+        height = 3 + ((x * 17 + z * 11) % 2); // 3 or 4 blocks tall
+      }
+
+      row.push(height);
+    }
+
+    map.push(row);
+  }
+
+  return map;
+}
+
+function createTreasureMap() {
+  const map = createFilledBooleanMap(false);
+
+  // Kept for compatibility with older versions of the project.
+  return map;
+}
+
+function createHiddenDiamondHeightMap() {
+  const map = [];
+
+  for (let z = 0; z < WORLD_SIZE; z++) {
+    const row = [];
+
+    for (let x = 0; x < WORLD_SIZE; x++) {
+      row.push(-1);
+    }
+
+    map.push(row);
+  }
+
+  let placed = 0;
+  let attempts = 0;
+
+  while (placed < HIDDEN_DIAMOND_COUNT && attempts < 2000) {
+    attempts++;
+
+    const x = 1 + Math.floor(Math.random() * (WORLD_SIZE - 2));
+    const z = 1 + Math.floor(Math.random() * (WORLD_SIZE - 2));
+
+    // Keep the starting area around the player mostly normal, so the spawn is readable.
+    if (x >= 15 && x <= 21 && z >= 15 && z <= 21) {
+      continue;
+    }
+
+    // Do not place a diamond in the same little area as the hidden dog.
+    if (Math.abs(x - DOG_MAP_X) <= 1 && Math.abs(z - DOG_MAP_Z) <= 1) {
+      continue;
+    }
+
+    if (map[z][x] !== -1) {
+      continue;
+    }
+
+    const sandHeight = g_sandHeightMap[z][x];
+
+    if (sandHeight < 3) {
+      continue;
+    }
+
+    // Hide the diamond under at least one sand block, but not all the way at bedrock.
+    let hiddenY = sandHeight - 2;
+
+    if (sandHeight === 4 && Math.random() < 0.5) {
+      hiddenY = 1;
+    }
+
+    map[z][x] = hiddenY;
+    placed++;
+  }
+
+  return map;
+}
 
 const VSHADER_SOURCE = `
 attribute vec4 a_Position;
@@ -151,6 +275,8 @@ function main() {
   initConeBuffer();
   initTextures();
   addActionsForHtmlUI();
+  updateDiamondCounter();
+  updateDogMessage("");
 
   gl.clearColor(0.6, 0.4, 0.9, .9);
 
@@ -317,10 +443,32 @@ function initTextures() {
     ]
   );
 
+  createTextureWithFallback(
+    "sand",
+    [
+      214, 190, 130, 255,
+      191, 166, 105, 255,
+      226, 205, 149, 255,
+      174, 148, 91, 255
+    ]
+  );
+
+  createTextureWithFallback(
+    "diamond",
+    [
+      115, 235, 255, 255,
+      20, 130, 180, 255,
+      50, 190, 225, 255,
+      210, 255, 255, 255
+    ]
+  );
+
   bindTexture("wall");
 
   loadTextureImageFromPaths("wall", 0);
   loadTextureImageFromPaths("grass", 0);
+  loadTextureImageFromPaths("sand", 0);
+  loadTextureImageFromPaths("diamond", 0);
 
   return true;
 }
@@ -626,6 +774,22 @@ function startJump() {
 }
 
 function updatePlayerPhysics(deltaSeconds) {
+  const groundHeight = getGroundHeightAtPosition(camera.eye.elements[0], camera.eye.elements[2]);
+  const targetEyeY = groundHeight + PLAYER_EYE_HEIGHT;
+
+  // If the player walked off a block, start falling instead of floating.
+  if (g_playerOnGround && camera.eye.elements[1] > targetEyeY + 0.02) {
+    g_playerOnGround = false;
+    g_playerVerticalVelocity = 0.0;
+  }
+
+  // If the ground moved up under the player because they landed on a block, snap to it.
+  if (g_playerOnGround && camera.eye.elements[1] < targetEyeY) {
+    moveCameraY(targetEyeY - camera.eye.elements[1]);
+    g_playerVerticalVelocity = 0.0;
+    return;
+  }
+
   if (g_playerOnGround) {
     return;
   }
@@ -633,8 +797,11 @@ function updatePlayerPhysics(deltaSeconds) {
   g_playerVerticalVelocity += PLAYER_GRAVITY * deltaSeconds;
   moveCameraY(g_playerVerticalVelocity * deltaSeconds);
 
-  if (camera.eye.elements[1] <= PLAYER_GROUND_EYE_Y) {
-    const correction = PLAYER_GROUND_EYE_Y - camera.eye.elements[1];
+  const newGroundHeight = getGroundHeightAtPosition(camera.eye.elements[0], camera.eye.elements[2]);
+  const newTargetEyeY = newGroundHeight + PLAYER_EYE_HEIGHT;
+
+  if (camera.eye.elements[1] <= newTargetEyeY) {
+    const correction = newTargetEyeY - camera.eye.elements[1];
     moveCameraY(correction);
     g_playerVerticalVelocity = 0.0;
     g_playerOnGround = true;
@@ -679,7 +846,31 @@ function moveCameraCollisionStep(dx, dz) {
   }
 }
 
+function getPlayerFeetY() {
+  return camera.eye.elements[1] - PLAYER_EYE_HEIGHT;
+}
+
+function getSolidHeightAtCell(cell) {
+  if (cell === null) {
+    return DIAMOND_PERIMETER_HEIGHT;
+  }
+
+  return Math.max(g_map[cell.z][cell.x], g_sandHeightMap[cell.z][cell.x]);
+}
+
+function getGroundHeightAtPosition(worldX, worldZ) {
+  const cell = worldToMapCell(worldX, worldZ);
+
+  if (cell === null) {
+    return PLAYER_GROUND_Y;
+  }
+
+  return Math.max(PLAYER_GROUND_Y, getSolidHeightAtCell(cell));
+}
+
 function isPlayerPositionWalkable(worldX, worldZ) {
+  const feetY = getPlayerFeetY();
+
   for (let i = 0; i < COLLISION_SAMPLE_OFFSETS.length; i++) {
     const offset = COLLISION_SAMPLE_OFFSETS[i];
     const cell = worldToMapCell(worldX + offset[0], worldZ + offset[1]);
@@ -689,7 +880,13 @@ function isPlayerPositionWalkable(worldX, worldZ) {
       return false;
     }
 
-    if (g_map[cell.z][cell.x] > 0) {
+    const solidHeight = getSolidHeightAtCell(cell);
+
+    // Height-aware collision:
+    // - On the grass floor, a 1-block wall still blocks you.
+    // - While jumping, once your feet are above that 1-block top, you can pass over it.
+    // - Taller sand stacks and the diamond perimeter still block you until you are above them.
+    if (solidHeight > feetY + PLAYER_STEP_CLEARANCE) {
       return false;
     }
   }
@@ -845,8 +1042,8 @@ function addBlockInFrontOfCamera() {
     return;
   }
 
-  if (g_map[cell.z][cell.x] < 4) {
-    g_map[cell.z][cell.x]++;
+  if (g_map[cell.z][cell.x] === 0 && g_sandHeightMap[cell.z][cell.x] < MAX_SAND_HEIGHT) {
+    g_sandHeightMap[cell.z][cell.x]++;
   }
 
   renderScene();
@@ -859,11 +1056,64 @@ function deleteBlockInFrontOfCamera() {
     return;
   }
 
-  if (g_map[cell.z][cell.x] > 0) {
-    g_map[cell.z][cell.x]--;
+  if (g_map[cell.z][cell.x] === 0 && g_sandHeightMap[cell.z][cell.x] > 0) {
+    const hiddenDiamondY = g_hiddenDiamondHeightMap[cell.z][cell.x];
+    const isDiggingExposedDiamond = hiddenDiamondY >= 0 && g_sandHeightMap[cell.z][cell.x] === hiddenDiamondY + 1;
+
+    g_sandHeightMap[cell.z][cell.x]--;
+
+    if (isDiggingExposedDiamond) {
+      g_itemsFound++;
+      g_hiddenDiamondHeightMap[cell.z][cell.x] = -1;
+      updateDiamondCounter();
+    }
+
+    checkIfDogFound(cell);
   }
 
   renderScene();
+}
+
+function isDogSearchCell(cell) {
+  return Math.abs(cell.x - DOG_MAP_X) <= 1 && Math.abs(cell.z - DOG_MAP_Z) <= 1;
+}
+
+function checkIfDogFound(cell) {
+  if (g_dogFound || !isDogSearchCell(cell)) {
+    return;
+  }
+
+  // The dog is buried under the player spawn area. Once the nearby sand is
+  // mostly cleared, reveal it, clear its own cell, start the animation,
+  // and show the message.
+  if (g_sandHeightMap[cell.z][cell.x] <= 1) {
+    g_dogFound = true;
+    g_animation = true;
+    g_pokeAnimation = false;
+    g_startTime = performance.now() / 1000.0;
+
+    if (g_sandHeightMap[DOG_MAP_Z] && typeof g_sandHeightMap[DOG_MAP_Z][DOG_MAP_X] === "number") {
+      g_sandHeightMap[DOG_MAP_Z][DOG_MAP_X] = 0;
+    }
+
+    updateDogMessage("You found me!");
+  }
+}
+
+function updateDiamondCounter() {
+  const counterElement = document.getElementById("diamond-counter");
+
+  if (counterElement) {
+    counterElement.innerText = g_itemsFound + " / " + TOTAL_BURIED_ITEMS;
+  }
+}
+
+function updateDogMessage(message) {
+  const messageElement = document.getElementById("dog-message");
+
+  if (messageElement) {
+    messageElement.innerText = message;
+  }
 }
 
 function drawWorld() {
@@ -873,33 +1123,49 @@ function drawWorld() {
   sky.scale(1000, 1000, 1000);
   drawColoredCube(sky, [0.45, 0.75, 1.0, 1.0]);
 
-  // Step 8: ground / floor
-  let ground = new Matrix4();
-  ground.translate(0, -0.55, 0);
-  ground.scale(WORLD_SIZE, 0.1, WORLD_SIZE);
-  drawTexturedCube(ground, [1.0, 1.0, 1.0, 1.0], "grass", WORLD_SIZE / 2, WORLD_SIZE / 2);
+  // Grass floor stays underneath the dig area. Sand blocks sit on top of it.
+  for (let z = 0; z < WORLD_SIZE; z++) {
+    for (let x = 0; x < WORLD_SIZE; x++) {
+      const worldX = x - WORLD_SIZE / 2 + 0.5;
+      const worldZ = z - WORLD_SIZE / 2 + 0.5;
 
-  // Step 10: walls from 32x32 map
+      let grass = new Matrix4();
+      grass.translate(worldX, -0.55, worldZ);
+      grass.scale(1, 0.1, 1);
+      drawTexturedCube(grass, [1.0, 1.0, 1.0, 1.0], "grass", 1.0, 1.0);
+
+      const sandHeight = g_sandHeightMap[z][x];
+      const hiddenDiamondY = g_hiddenDiamondHeightMap[z][x];
+      const hiddenDiamondIsExposed = hiddenDiamondY >= 0 && sandHeight === hiddenDiamondY + 1;
+
+      for (let y = 0; y < sandHeight; y++) {
+        let block = new Matrix4();
+        block.translate(worldX, y, worldZ);
+        block.scale(1, 1, 1);
+
+        if (hiddenDiamondIsExposed && y === hiddenDiamondY) {
+          drawTexturedCube(block, [1.0, 1.0, 1.0, 1.0], "diamond", 1.0, 1.0);
+        } else {
+          drawTexturedCube(block, [1.0, 1.0, 1.0, 1.0], "sand", 1.0, 1.0);
+        }
+      }
+    }
+  }
+
+  // Tall diamond wall around the perimeter of the dig site.
   for (let z = 0; z < WORLD_SIZE; z++) {
     for (let x = 0; x < WORLD_SIZE; x++) {
       let height = g_map[z][x];
 
-      if (height > 0) {
-        for (let y = 0; y < height; y++) {
-          let wall = new Matrix4();
-
-          // Center the 32x32 map around the origin
-          wall.translate(
-            x - WORLD_SIZE / 2 + 0.5,
-            y,
-            z - WORLD_SIZE / 2 + 0.5
-          );
-
-          wall.scale(1, 1, 1);
-
-          // Textured walls
-          drawTexturedCube(wall, [1.0, 1.0, 1.0, 1.0], "wall");
-        }
+      for (let y = 0; y < height; y++) {
+        let diamond = new Matrix4();
+        diamond.translate(
+          x - WORLD_SIZE / 2 + 0.5,
+          y,
+          z - WORLD_SIZE / 2 + 0.5
+        );
+        diamond.scale(1, 1, 1);
+        drawTexturedCube(diamond, [1.0, 1.0, 1.0, 1.0], "diamond", 1.0, 1.0);
       }
     }
   }
@@ -910,80 +1176,96 @@ function renderScene() {
   gl.uniformMatrix4fv(u_ViewMatrix, false, camera.viewMatrix.elements);
   gl.uniformMatrix4fv(u_ProjectionMatrix, false, camera.projectionMatrix.elements);
 
-
   drawWorld();
-  let body = new Matrix4();
+
+  if (g_dogFound) {
+    drawDog();
+  }
+}
+
+function makeDogMatrix(baseX, baseY, baseZ) {
+  let matrix = new Matrix4();
+  matrix.translate(baseX, baseY, baseZ);
+  return matrix;
+}
+
+function drawDog() {
+  // The dog appears after you dig it out. It is lowered so its feet sit on the sand/grass.
+  const dogX = DOG_WORLD_X;
+  const dogZ = DOG_WORLD_Z;
+  const dogY = getGroundHeightAtPosition(dogX, dogZ) + 0.15;
+
+  let body = makeDogMatrix(dogX, dogY, dogZ);
   body.translate(0, 0, 0);
   body.scale(1.4, 0.65, 0.55);
-  drawCube(body, [0.55, 0.33, 0.16, 1]);
+  drawColoredCube(body, [0.55, 0.33, 0.16, 1]);
 
-  let chest = new Matrix4();
+  let chest = makeDogMatrix(dogX, dogY, dogZ);
   chest.translate(0.55, 0.05, 0);
   chest.scale(0.45, 0.7, 0.6);
-  drawCube(chest, [0.63, 0.40, 0.22, 1]);
+  drawColoredCube(chest, [0.63, 0.40, 0.22, 1]);
 
-  let head = new Matrix4();
+  let head = makeDogMatrix(dogX, dogY, dogZ);
   head.translate(1.0, 0.45, 0);
   head.rotate(gHeadAngle, 0, 1, 0);
   head.scale(0.5, 0.45, 0.45);
-  drawCube(head, [0.68, 0.45, 0.25, 1]);
+  drawColoredCube(head, [0.68, 0.45, 0.25, 1]);
 
-  let snout = new Matrix4();
+  let snout = makeDogMatrix(dogX, dogY, dogZ);
   snout.translate(1.32, 0.38, 0);
   snout.scale(0.28, 0.22, 0.25);
-  drawCube(snout, [0.85, 0.65, 0.45, 1]);
+  drawColoredCube(snout, [0.85, 0.65, 0.45, 1]);
 
-  let nose = new Matrix4();
+  let nose = makeDogMatrix(dogX, dogY, dogZ);
   nose.translate(1.52, 0.39, 0);
   nose.rotate(270, 0, 0, 1);
   nose.scale(0.18, 0.18, 0.18);
   drawCone(nose, [0.02, 0.02, 0.02, 1]);
 
-  let ear1 = new Matrix4();
+  let ear1 = makeDogMatrix(dogX, dogY, dogZ);
   ear1.translate(0.91, 0.76, 0.2);
   ear1.rotate(20 + gEarAngle, 1, 0, 0);
   ear1.scale(0.18, 0.35, 0.12);
-  drawCube(ear1, [0.35, 0.18, 0.08, 1]);
+  drawColoredCube(ear1, [0.35, 0.18, 0.08, 1]);
 
-  let ear2 = new Matrix4();
+  let ear2 = makeDogMatrix(dogX, dogY, dogZ);
   ear2.translate(0.91, 0.76, -0.2);
-  ear2.rotate(-20 - gEarAngle, 1, 0, 0);  
+  ear2.rotate(-20 - gEarAngle, 1, 0, 0);
   ear2.scale(0.18, 0.35, 0.12);
-  drawCube(ear2, [0.35, 0.18, 0.08, 1]);
+  drawColoredCube(ear2, [0.35, 0.18, 0.08, 1]);
 
-
-  let tail = new Matrix4();
+  let tail = makeDogMatrix(dogX, dogY, dogZ);
   tail.translate(-0.75, 0.25, 0);
   tail.rotate(gTailAngle, 0, 1, 0);
   tail.rotate(300, 0, 0, 1);
   tail.scale(0.85, 0.15, 0.15);
   drawCone(tail, [0.45, 0.25, 0.12, 1]);
 
-drawLeg(-0.45, -0.35, 0.25, -gLegAngle, -gCalfAngle, -gFootAngle);
-drawLeg( 0.45, -0.35, 0.25, gLegAngle, gCalfAngle, gFootAngle);
+  drawLeg(-0.45, -0.35, 0.25, -gLegAngle, -gCalfAngle, -gFootAngle, dogX, dogY, dogZ);
+  drawLeg( 0.45, -0.35, 0.25,  gLegAngle,  gCalfAngle,  gFootAngle, dogX, dogY, dogZ);
 
-drawLeg(-0.45, -0.35, -0.25, gLegAngle, gCalfAngle, gFootAngle);
-drawLeg( 0.45, -0.35, -0.25, -gLegAngle, -gCalfAngle, -gFootAngle);
+  drawLeg(-0.45, -0.35, -0.25,  gLegAngle,  gCalfAngle,  gFootAngle, dogX, dogY, dogZ);
+  drawLeg( 0.45, -0.35, -0.25, -gLegAngle, -gCalfAngle, -gFootAngle, dogX, dogY, dogZ);
 }
 
-function drawLeg(x, y, z, thighAngle, calfAngle, footAngle) {
-  let thigh = new Matrix4();
+function drawLeg(x, y, z, thighAngle, calfAngle, footAngle, baseX = 0, baseY = 0, baseZ = 0) {
+  let thigh = makeDogMatrix(baseX, baseY, baseZ);
   thigh.translate(x, y, z);
   thigh.rotate(thighAngle, 0, 0, 1);
   thigh.translate(0, -0.16, 0);
   thigh.scale(0.18, 0.38, 0.18);
   drawColoredCube(thigh, [0.42, 0.23, 0.1, 1]);
 
-  let calf = new Matrix4();
+  let calf = makeDogMatrix(baseX, baseY, baseZ);
   calf.translate(x, y, z);
   calf.rotate(thighAngle, 0, 0, 1);
   calf.translate(0, -0.30, 0);
   calf.rotate(calfAngle, 0, 0, 1);
   calf.translate(0, -0.16, 0);
   calf.scale(0.15, 0.32, 0.15);
-  drawColoredCube(thigh, [0.42, 0.23, 0.1, 1]);
+  drawColoredCube(calf, [0.38, 0.2, 0.08, 1]);
 
-  let foot = new Matrix4();
+  let foot = makeDogMatrix(baseX, baseY, baseZ);
   foot.translate(x, y, z);
   foot.rotate(thighAngle, 0, 0, 1);
   foot.translate(0, -0.32, 0);
@@ -992,7 +1274,7 @@ function drawLeg(x, y, z, thighAngle, calfAngle, footAngle) {
   foot.rotate(footAngle, 0, 0, 1);
   foot.translate(0.08, -0.05, 0);
   foot.scale(0.28, 0.12, 0.2);
-  drawColoredCube(thigh, [0.42, 0.23, 0.1, 1]);
+  drawColoredCube(foot, [0.22, 0.11, 0.04, 1]);
 }
 
 function updateFPS() {
