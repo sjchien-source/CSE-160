@@ -11,8 +11,46 @@
       background-color: #eeeeee;
     }
 
+    .canvas-wrap {
+      position: relative;
+      display: inline-block;
+    }
+
     canvas {
       border: 1px solid black;
+      display: block;
+    }
+
+    #crosshair {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 14px;
+      height: 14px;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+
+    #crosshair::before,
+    #crosshair::after {
+      content: "";
+      position: absolute;
+      background: white;
+      box-shadow: 0 0 2px black;
+    }
+
+    #crosshair::before {
+      left: 6px;
+      top: 1px;
+      width: 2px;
+      height: 12px;
+    }
+
+    #crosshair::after {
+      left: 1px;
+      top: 6px;
+      width: 12px;
+      height: 2px;
     }
 
     .controls {
@@ -27,13 +65,16 @@
   <p>sjchien@ucsc.edu</p>
   <p id="fps">FPS: -</p>
 
-  <canvas id="webgl" width="600" height="600">
-    Please use a browser that supports canvas.
-  </canvas>
+  <div class="canvas-wrap">
+    <canvas id="webgl" width="600" height="600">
+      Please use a browser that supports canvas.
+    </canvas>
+    <div id="crosshair"></div>
+  </div>
 
   <div class="controls">
     <p>
-        WASD to move QE turn F add block R remove block
+        WASD to move, Space to jump, QE turn, F add block, R remove block
     </p>
 
   </div>

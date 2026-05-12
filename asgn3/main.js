@@ -12,10 +12,21 @@ let u_ProjectionMatrix;
 let u_Color;
 let u_Sampler0;
 let u_TexColorWeight;
+let u_UVScale;
 
-let g_texture0;
-let g_texturePathIndex = 0;
-const TEXTURE_PATHS = ["textures/wall.png", "textures/grass.png"];
+let g_textures = {};
+
+// Separate texture units keep wall and grass images from overwriting each other.
+const TEXTURE_UNITS = {
+  wall: 0,
+  grass: 1
+};
+
+const TEXTURE_PATHS = {
+  wall: ["./textures/wall.png", "./textures/wall.jpg", "./wall.png", "./wall.jpg", "textures/wall.png", "textures/wall.jpg", "wall.png", "wall.jpg"],
+
+  grass: ["./grass.jpg", "grass.jpg", "./textures/grass.jpg", "textures/grass.jpg", "./grass.png", "grass.png", "./textures/grass.png", "textures/grass.png"]
+};
 
 let gAnimalGlobalRotation = 0;
 let gMouseXRotation = 0;
@@ -39,8 +50,32 @@ let g_lastMouseY = 0;
 let g_lastFrameTime = performance.now();
 let g_frameCount = 0;
 let g_fps = 0;
+let g_lastTickTime = performance.now() / 1000.0;
 
 const WORLD_SIZE = 32;
+const PLAYER_EYE_HEIGHT = 1.75;
+const PLAYER_GROUND_Y = 0.0;
+const PLAYER_GROUND_EYE_Y = PLAYER_GROUND_Y + PLAYER_EYE_HEIGHT;
+const PLAYER_RADIUS = 0.28;
+const PLAYER_MOVE_SPEED = 6.0;
+const PLAYER_JUMP_SPEED = 6.5;
+const PLAYER_GRAVITY = -18.0;
+
+let g_playerVerticalVelocity = 0.0;
+let g_playerOnGround = true;
+
+const COLLISION_SAMPLE_OFFSETS = [
+  [0.0, 0.0],
+  [PLAYER_RADIUS, 0.0],
+  [-PLAYER_RADIUS, 0.0],
+  [0.0, PLAYER_RADIUS],
+  [0.0, -PLAYER_RADIUS],
+  [PLAYER_RADIUS * 0.707, PLAYER_RADIUS * 0.707],
+  [PLAYER_RADIUS * 0.707, -PLAYER_RADIUS * 0.707],
+  [-PLAYER_RADIUS * 0.707, PLAYER_RADIUS * 0.707],
+  [-PLAYER_RADIUS * 0.707, -PLAYER_RADIUS * 0.707]
+];
+
 
 const g_map = [
   "44444444444444444444444444444444",
@@ -86,10 +121,11 @@ varying vec2 v_UV;
 uniform mat4 u_ModelMatrix;
 uniform mat4 u_ViewMatrix;
 uniform mat4 u_ProjectionMatrix;
+uniform vec2 u_UVScale;
 
 void main() {
   gl_Position = u_ProjectionMatrix * u_ViewMatrix * u_ModelMatrix * a_Position;
-  v_UV = a_UV;
+  v_UV = a_UV * u_UVScale;
 }`;
 
 const FSHADER_SOURCE = `
@@ -149,6 +185,7 @@ function connectVariablesToGLSL() {
   u_Color = gl.getUniformLocation(gl.program, "u_Color");
   u_Sampler0 = gl.getUniformLocation(gl.program, "u_Sampler0");
   u_TexColorWeight = gl.getUniformLocation(gl.program, "u_TexColorWeight");
+  u_UVScale = gl.getUniformLocation(gl.program, "u_UVScale");
 
   if (a_Position < 0) {
     console.log("Failed to get the storage location of a_Position");
@@ -183,97 +220,76 @@ gl.uniformMatrix4fv(u_ProjectionMatrix, false, projectionMatrix.elements);
 
 gl.uniform1i(u_Sampler0, 0);
 gl.uniform1f(u_TexColorWeight, 0.0);
+gl.uniform2f(u_UVScale, 1.0, 1.0);
 }
 
 function initCubeBuffer() {
   const data = [];
 
-  function pushFace(vertices) {
-    const uvs = [
-      0, 0,
-      1, 0,
-      1, 1,
-      0, 0,
-      1, 1,
-      0, 1
-    ];
-
-    for (let i = 0; i < 6; i++) {
-      data.push(
-        vertices[i * 3],
-        vertices[i * 3 + 1],
-        vertices[i * 3 + 2],
-        uvs[i * 2],
-        uvs[i * 2 + 1]
-      );
-    }
+  function pushVertex(position, uv) {
+    data.push(position[0], position[1], position[2], uv[0], uv[1]);
   }
 
-  // Front face
-  pushFace([
-    -0.5, -0.5,  0.5,
-     0.5, -0.5,  0.5,
-     0.5,  0.5,  0.5,
+  function pushQuad(bottomLeft, bottomRight, topRight, topLeft) {
+    // Each face gets the same clean square UV layout. This avoids the odd
+    // mirrored/diagonal-looking texture seams that happened when some cube
+    // faces used a different vertex order.
+    pushVertex(bottomLeft,  [0, 0]);
+    pushVertex(bottomRight, [1, 0]);
+    pushVertex(topRight,    [1, 1]);
 
-    -0.5, -0.5,  0.5,
-     0.5,  0.5,  0.5,
-    -0.5,  0.5,  0.5
-  ]);
+    pushVertex(bottomLeft,  [0, 0]);
+    pushVertex(topRight,    [1, 1]);
+    pushVertex(topLeft,     [0, 1]);
+  }
 
-  // Back face
-  pushFace([
-    -0.5, -0.5, -0.5,
-    -0.5,  0.5, -0.5,
-     0.5,  0.5, -0.5,
+  // Front: z = +0.5
+  pushQuad(
+    [-0.5, -0.5,  0.5],
+    [ 0.5, -0.5,  0.5],
+    [ 0.5,  0.5,  0.5],
+    [-0.5,  0.5,  0.5]
+  );
 
-    -0.5, -0.5, -0.5,
-     0.5,  0.5, -0.5,
-     0.5, -0.5, -0.5
-  ]);
+  // Back: z = -0.5
+  pushQuad(
+    [ 0.5, -0.5, -0.5],
+    [-0.5, -0.5, -0.5],
+    [-0.5,  0.5, -0.5],
+    [ 0.5,  0.5, -0.5]
+  );
 
-  // Left face
-  pushFace([
-    -0.5, -0.5, -0.5,
-    -0.5, -0.5,  0.5,
-    -0.5,  0.5,  0.5,
+  // Left: x = -0.5
+  pushQuad(
+    [-0.5, -0.5, -0.5],
+    [-0.5, -0.5,  0.5],
+    [-0.5,  0.5,  0.5],
+    [-0.5,  0.5, -0.5]
+  );
 
-    -0.5, -0.5, -0.5,
-    -0.5,  0.5,  0.5,
-    -0.5,  0.5, -0.5
-  ]);
+  // Right: x = +0.5
+  pushQuad(
+    [0.5, -0.5,  0.5],
+    [0.5, -0.5, -0.5],
+    [0.5,  0.5, -0.5],
+    [0.5,  0.5,  0.5]
+  );
 
-  // Right face
-  pushFace([
-     0.5, -0.5, -0.5,
-     0.5,  0.5,  0.5,
-     0.5, -0.5,  0.5,
+  // Top: y = +0.5
+  pushQuad(
+    [-0.5, 0.5,  0.5],
+    [ 0.5, 0.5,  0.5],
+    [ 0.5, 0.5, -0.5],
+    [-0.5, 0.5, -0.5]
+  );
 
-     0.5, -0.5, -0.5,
-     0.5,  0.5, -0.5,
-     0.5,  0.5,  0.5
-  ]);
-
-  // Top face
-  pushFace([
-    -0.5,  0.5, -0.5,
-    -0.5,  0.5,  0.5,
-     0.5,  0.5,  0.5,
-
-    -0.5,  0.5, -0.5,
-     0.5,  0.5,  0.5,
-     0.5,  0.5, -0.5
-  ]);
-
-  // Bottom face
-  pushFace([
-    -0.5, -0.5, -0.5,
-     0.5, -0.5,  0.5,
-    -0.5, -0.5,  0.5,
-
-    -0.5, -0.5, -0.5,
-     0.5, -0.5, -0.5,
-     0.5, -0.5,  0.5
-  ]);
+  // Bottom: y = -0.5
+  pushQuad(
+    [-0.5, -0.5, -0.5],
+    [ 0.5, -0.5, -0.5],
+    [ 0.5, -0.5,  0.5],
+    [-0.5, -0.5,  0.5]
+  );
 
   g_cubeBuffer = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, g_cubeBuffer);
@@ -281,21 +297,55 @@ function initCubeBuffer() {
 }
 
 function initTextures() {
-  g_texture0 = gl.createTexture();
+  createTextureWithFallback(
+    "wall",
+    [
+      170, 170, 170, 255,
+      90, 90, 90, 255,
+      90, 90, 90, 255,
+      170, 170, 170, 255
+    ]
+  );
 
-  if (!g_texture0) {
-    console.log("Failed to create the texture object");
-    return false;
+  createTextureWithFallback(
+    "grass",
+    [
+      75, 150, 60, 255,
+      45, 110, 35, 255,
+      45, 110, 35, 255,
+      75, 150, 60, 255
+    ]
+  );
+
+  bindTexture("wall");
+
+  loadTextureImageFromPaths("wall", 0);
+  loadTextureImageFromPaths("grass", 0);
+
+  return true;
+}
+
+function getTextureUnit(textureName) {
+  if (TEXTURE_UNITS[textureName] === undefined) {
+    return 0;
   }
 
-  // Temporary checkerboard texture so WebGL has something valid before the image loads.
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, g_texture0);
+  return TEXTURE_UNITS[textureName];
+}
 
-  const fallbackPixels = new Uint8Array([
-    180, 180, 180, 255,   80,  80,  80, 255,
-     80,  80,  80, 255,  180, 180, 180, 255
-  ]);
+function createTextureWithFallback(textureName, pixels) {
+  const texture = gl.createTexture();
+
+  if (!texture) {
+    console.log("Failed to create texture: " + textureName);
+    return;
+  }
+
+  g_textures[textureName] = texture;
+
+  const unit = getTextureUnit(textureName);
+  gl.activeTexture(gl.TEXTURE0 + unit);
+  gl.bindTexture(gl.TEXTURE_2D, texture);
 
   gl.texImage2D(
     gl.TEXTURE_2D,
@@ -306,52 +356,91 @@ function initTextures() {
     0,
     gl.RGBA,
     gl.UNSIGNED_BYTE,
-    fallbackPixels
+    new Uint8Array(pixels)
   );
 
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-  gl.uniform1i(u_Sampler0, 0);
-
-  loadTextureImageFromPath();
-  return true;
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
 }
 
-function loadTextureImageFromPath() {
-  if (g_texturePathIndex >= TEXTURE_PATHS.length) {
-    console.log("Could not find a texture image. Add wall.jpg in the same folder as main.js, or add textures/wall.jpg.");
+function loadTextureImageFromPaths(textureName, pathIndex) {
+  const paths = TEXTURE_PATHS[textureName];
+
+  if (!paths || pathIndex >= paths.length) {
+    console.log("Could not find texture for " + textureName + ". Tried: " + (paths || []).join(", "));
     return;
   }
 
+  const texturePath = paths[pathIndex];
   const image = new Image();
-  const texturePath = TEXTURE_PATHS[g_texturePathIndex];
 
   image.onload = function () {
-    loadTexture(image, texturePath);
+    loadTexture(textureName, image, texturePath);
   };
 
   image.onerror = function () {
     console.log("Could not load texture: " + texturePath);
-    g_texturePathIndex++;
-    loadTextureImageFromPath();
+    loadTextureImageFromPaths(textureName, pathIndex + 1);
   };
 
   image.src = texturePath;
 }
 
-function loadTexture(image, texturePath) {
+function isPowerOfTwo(value) {
+  return value > 0 && (value & (value - 1)) === 0;
+}
+
+function nextPowerOfTwo(value) {
+  let power = 1;
+
+  while (power < value) {
+    power *= 2;
+  }
+
+  return power;
+}
+
+function getTextureUploadSource(image, texturePath) {
+  if (isPowerOfTwo(image.width) && isPowerOfTwo(image.height)) {
+    return image;
+  }
+
+  // WebGL 1 cannot repeat non-power-of-two images. Resize into a temporary
+  // power-of-two canvas so grass.jpg can tile across the floor instead of
+  // stretching once across the entire world.
+  const canvasTexture = document.createElement("canvas");
+  canvasTexture.width = nextPowerOfTwo(image.width);
+  canvasTexture.height = nextPowerOfTwo(image.height);
+
+  const context = canvasTexture.getContext("2d");
+  context.drawImage(image, 0, 0, canvasTexture.width, canvasTexture.height);
+
+  console.log(
+    texturePath + " was resized to " +
+    canvasTexture.width + "x" + canvasTexture.height +
+    " so it can repeat correctly in WebGL."
+  );
+
+  return canvasTexture;
+}
+
+function loadTexture(textureName, image, texturePath) {
+  const texture = g_textures[textureName];
+
+  if (!texture) {
+    console.log("Texture was not initialized: " + textureName);
+    return;
+  }
+
+  const unit = getTextureUnit(textureName);
+  const source = getTextureUploadSource(image, texturePath);
+
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
 
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, g_texture0);
-
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.activeTexture(gl.TEXTURE0 + unit);
+  gl.bindTexture(gl.TEXTURE_2D, texture);
 
   gl.texImage2D(
     gl.TEXTURE_2D,
@@ -359,12 +448,32 @@ function loadTexture(image, texturePath) {
     gl.RGBA,
     gl.RGBA,
     gl.UNSIGNED_BYTE,
-    image
+    source
   );
 
-  gl.uniform1i(u_Sampler0, 0);
-  console.log("Loaded texture: " + texturePath);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+
+  console.log("Loaded " + textureName + " texture: " + texturePath);
   renderScene();
+}
+
+function bindTexture(textureName) {
+  const texture = g_textures[textureName] || g_textures.wall || g_textures.grass;
+
+  if (!texture) {
+    return;
+  }
+
+  const safeTextureName = g_textures[textureName] ? textureName : (g_textures.wall ? "wall" : "grass");
+  const unit = getTextureUnit(safeTextureName);
+
+  gl.activeTexture(gl.TEXTURE0 + unit);
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.uniform1i(u_Sampler0, unit);
 }
 
 function initConeBuffer() {
@@ -436,19 +545,23 @@ function addActionsForHtmlUI() {
   });
 
   document.addEventListener("keydown", function (ev) {
+    if (ev.code === "Space") {
+      startJump();
+    }
+
     keys[ev.code] = true;
 
-    if (ev.code === "KeyF") {
+    if (ev.code === "KeyF" && !ev.repeat) {
       addBlockInFrontOfCamera();
     }
 
-    if (ev.code === "KeyR") {
+    if (ev.code === "KeyR" && !ev.repeat) {
       deleteBlockInFrontOfCamera();
     }
 
     if ([
       "KeyW", "KeyA", "KeyS", "KeyD",
-      "KeyQ", "KeyE", "KeyF", "KeyR"
+      "KeyQ", "KeyE", "KeyF", "KeyR", "Space"
     ].includes(ev.code)) {
       ev.preventDefault();
     }
@@ -459,21 +572,39 @@ function addActionsForHtmlUI() {
   });
 }
 
-function updateCameraControls() {
+function updateCameraControls(deltaSeconds) {
+  let moveX = 0.0;
+  let moveZ = 0.0;
+  const forward = camera.getForwardFlat();
+
   if (keys.KeyW) {
-    camera.moveForward();
+    moveX += forward[0];
+    moveZ += forward[2];
   }
 
   if (keys.KeyS) {
-    camera.moveBackwards();
+    moveX -= forward[0];
+    moveZ -= forward[2];
   }
 
   if (keys.KeyA) {
-    camera.moveLeft();
+    moveX += forward[2];
+    moveZ -= forward[0];
   }
 
   if (keys.KeyD) {
-    camera.moveRight();
+    moveX -= forward[2];
+    moveZ += forward[0];
+  }
+
+  const moveLength = Math.sqrt(moveX * moveX + moveZ * moveZ);
+
+  if (moveLength > 0.0) {
+    moveX /= moveLength;
+    moveZ /= moveLength;
+
+    const distance = PLAYER_MOVE_SPEED * deltaSeconds;
+    moveCameraWithCollision(moveX * distance, moveZ * distance);
   }
 
   if (keys.KeyQ) {
@@ -485,10 +616,96 @@ function updateCameraControls() {
   }
 }
 
-function tick() {
-  g_seconds = performance.now() / 1000.0 - g_startTime;
+function startJump() {
+  if (!g_playerOnGround) {
+    return;
+  }
 
-  updateCameraControls();
+  g_playerVerticalVelocity = PLAYER_JUMP_SPEED;
+  g_playerOnGround = false;
+}
+
+function updatePlayerPhysics(deltaSeconds) {
+  if (g_playerOnGround) {
+    return;
+  }
+
+  g_playerVerticalVelocity += PLAYER_GRAVITY * deltaSeconds;
+  moveCameraY(g_playerVerticalVelocity * deltaSeconds);
+
+  if (camera.eye.elements[1] <= PLAYER_GROUND_EYE_Y) {
+    const correction = PLAYER_GROUND_EYE_Y - camera.eye.elements[1];
+    moveCameraY(correction);
+    g_playerVerticalVelocity = 0.0;
+    g_playerOnGround = true;
+  }
+}
+
+function moveCameraY(dy) {
+  camera.eye.elements[1] += dy;
+  camera.at.elements[1] += dy;
+  camera.updateViewMatrix();
+}
+
+function moveCameraWithCollision(dx, dz) {
+  // Split movement into small chunks so a low frame rate cannot skip through a wall.
+  const maxStep = 0.08;
+  const totalDistance = Math.sqrt(dx * dx + dz * dz);
+  const steps = Math.max(1, Math.ceil(totalDistance / maxStep));
+
+  const stepX = dx / steps;
+  const stepZ = dz / steps;
+
+  for (let i = 0; i < steps; i++) {
+    moveCameraCollisionStep(stepX, stepZ);
+  }
+
+  camera.updateViewMatrix();
+}
+
+function moveCameraCollisionStep(dx, dz) {
+  const eye = camera.eye.elements;
+
+  // Test X and Z separately. This lets the player slide along walls instead of
+  // getting stuck when walking diagonally into one.
+  if (isPlayerPositionWalkable(eye[0] + dx, eye[2])) {
+    eye[0] += dx;
+    camera.at.elements[0] += dx;
+  }
+
+  if (isPlayerPositionWalkable(eye[0], eye[2] + dz)) {
+    eye[2] += dz;
+    camera.at.elements[2] += dz;
+  }
+}
+
+function isPlayerPositionWalkable(worldX, worldZ) {
+  for (let i = 0; i < COLLISION_SAMPLE_OFFSETS.length; i++) {
+    const offset = COLLISION_SAMPLE_OFFSETS[i];
+    const cell = worldToMapCell(worldX + offset[0], worldZ + offset[1]);
+
+    // Treat outside the map like a wall, so the player cannot leave the world.
+    if (cell === null) {
+      return false;
+    }
+
+    if (g_map[cell.z][cell.x] > 0) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function tick() {
+  const now = performance.now() / 1000.0;
+  const deltaSeconds = Math.min(now - g_lastTickTime, 0.05);
+  g_lastTickTime = now;
+
+  g_seconds = now - g_startTime;
+
+  updateCameraControls(deltaSeconds);
+  updatePlayerPhysics(deltaSeconds);
   updateAnimationAngles();
   renderScene();
   updateFPS();
@@ -533,7 +750,7 @@ function drawCone(matrix, color) {
   gl.drawArrays(gl.TRIANGLES, 0, g_coneVertexCount);
 }
 
-function drawCube(matrix, color, texColorWeight = 0.0) {
+function drawCube(matrix, color, texColorWeight = 0.0, textureName = "wall", uvScaleX = 1.0, uvScaleY = 1.0) {
   gl.bindBuffer(gl.ARRAY_BUFFER, g_cubeBuffer);
 
   const FSIZE = Float32Array.BYTES_PER_ELEMENT;
@@ -545,33 +762,52 @@ function drawCube(matrix, color, texColorWeight = 0.0) {
   gl.vertexAttribPointer(a_UV, 2, gl.FLOAT, false, FSIZE * 5, FSIZE * 3);
   gl.enableVertexAttribArray(a_UV);
 
+  if (texColorWeight > 0.0) {
+    bindTexture(textureName);
+  }
+
   gl.uniformMatrix4fv(u_ModelMatrix, false, matrix.elements);
   gl.uniform4fv(u_Color, color);
 
   // Step 4: choose how much texture to use.
   gl.uniform1f(u_TexColorWeight, texColorWeight);
+  gl.uniform2f(u_UVScale, uvScaleX, uvScaleY);
 
   gl.drawArrays(gl.TRIANGLES, 0, 36);
+
+  // Reset so colored shapes and the animal do not inherit tiled UVs.
+  gl.uniform2f(u_UVScale, 1.0, 1.0);
 }
 
 function drawColoredCube(matrix, color) {
   drawCube(matrix, color, 0.0);
 }
 
-function drawTexturedCube(matrix, color = [1.0, 1.0, 1.0, 1.0]) {
-  drawCube(matrix, color, 1.0);
+function drawTexturedCube(matrix, color = [1.0, 1.0, 1.0, 1.0], textureName = "wall", uvScaleX = 1.0, uvScaleY = 1.0) {
+  drawCube(matrix, color, 1.0, textureName, uvScaleX, uvScaleY);
 }
 
-function drawMixedCube(matrix, color, textureAmount) {
-  drawCube(matrix, color, textureAmount);
+function drawMixedCube(matrix, color, textureAmount, textureName = "wall", uvScaleX = 1.0, uvScaleY = 1.0) {
+  drawCube(matrix, color, textureAmount, textureName, uvScaleX, uvScaleY);
 }
 
-function drawWorld() {
+function worldToMapCell(worldX, worldZ) {
+  const mapX = Math.floor(worldX + WORLD_SIZE / 2);
+  const mapZ = Math.floor(worldZ + WORLD_SIZE / 2);
+
+  if (
+    mapX < 0 || mapX >= WORLD_SIZE ||
+    mapZ < 0 || mapZ >= WORLD_SIZE
+  ) {
+    return null;
+  }
+
+  return { x: mapX, z: mapZ };
+}
 
 function getMapCellInFrontOfCamera() {
   let dx = camera.at.elements[0] - camera.eye.elements[0];
   let dz = camera.at.elements[2] - camera.eye.elements[2];
-
   let length = Math.sqrt(dx * dx + dz * dz);
 
   if (length === 0) {
@@ -581,27 +817,29 @@ function getMapCellInFrontOfCamera() {
   dx /= length;
   dz /= length;
 
-  let targetX = camera.eye.elements[0] + dx * 2.0;
-  let targetZ = camera.eye.elements[2] + dz * 2.0;
+  const currentCell = worldToMapCell(camera.eye.elements[0], camera.eye.elements[2]);
 
-  let mapX = Math.floor(targetX + WORLD_SIZE / 2);
-  let mapZ = Math.floor(targetZ + WORLD_SIZE / 2);
+  // Step along a short ray and return the first map square in front of the player,
+  // instead of jumping two full blocks ahead and often editing the wrong square.
+  for (let distance = 0.25; distance <= 3.0; distance += 0.05) {
+    const targetCell = worldToMapCell(
+      camera.eye.elements[0] + dx * distance,
+      camera.eye.elements[2] + dz * distance
+    );
 
-  if (
-    mapX < 0 || mapX >= WORLD_SIZE ||
-    mapZ < 0 || mapZ >= WORLD_SIZE
-  ) {
-    return null;
+    if (
+      targetCell !== null &&
+      (currentCell === null || targetCell.x !== currentCell.x || targetCell.z !== currentCell.z)
+    ) {
+      return targetCell;
+    }
   }
 
-  return {
-    x: mapX,
-    z: mapZ
-  };
+  return null;
 }
 
 function addBlockInFrontOfCamera() {
-  let cell = getMapCellInFrontOfCamera();
+  const cell = getMapCellInFrontOfCamera();
 
   if (cell === null) {
     return;
@@ -615,7 +853,7 @@ function addBlockInFrontOfCamera() {
 }
 
 function deleteBlockInFrontOfCamera() {
-  let cell = getMapCellInFrontOfCamera();
+  const cell = getMapCellInFrontOfCamera();
 
   if (cell === null) {
     return;
@@ -627,6 +865,8 @@ function deleteBlockInFrontOfCamera() {
 
   renderScene();
 }
+
+function drawWorld() {
   // Step 9: sky box
   let sky = new Matrix4();
   sky.translate(0, 20, 0);
@@ -637,7 +877,7 @@ function deleteBlockInFrontOfCamera() {
   let ground = new Matrix4();
   ground.translate(0, -0.55, 0);
   ground.scale(WORLD_SIZE, 0.1, WORLD_SIZE);
-  drawColoredCube(ground, [0.25, 0.7, 0.25, 1.0]);
+  drawTexturedCube(ground, [1.0, 1.0, 1.0, 1.0], "grass", WORLD_SIZE / 2, WORLD_SIZE / 2);
 
   // Step 10: walls from 32x32 map
   for (let z = 0; z < WORLD_SIZE; z++) {
@@ -658,7 +898,7 @@ function deleteBlockInFrontOfCamera() {
           wall.scale(1, 1, 1);
 
           // Textured walls
-          drawTexturedCube(wall);
+          drawTexturedCube(wall, [1.0, 1.0, 1.0, 1.0], "wall");
         }
       }
     }
@@ -672,91 +912,26 @@ function renderScene() {
 
 
   drawWorld();
-
-  function getMapCellInFrontOfCamera() {
-  // Direction camera is looking
-  let dx = camera.at.elements[0] - camera.eye.elements[0];
-  let dz = camera.at.elements[2] - camera.eye.elements[2];
-
-  let length = Math.sqrt(dx * dx + dz * dz);
-
-  if (length === 0) {
-    return null;
-  }
-
-  dx /= length;
-  dz /= length;
-
-  // Pick a point in front of the player
-  let targetX = camera.eye.elements[0] + dx * 2.0;
-  let targetZ = camera.eye.elements[2] + dz * 2.0;
-
-  // Convert world coordinates back into map indices
-  let mapX = Math.floor(targetX + WORLD_SIZE / 2);
-  let mapZ = Math.floor(targetZ + WORLD_SIZE / 2);
-
-  if (
-    mapX < 0 || mapX >= WORLD_SIZE ||
-    mapZ < 0 || mapZ >= WORLD_SIZE
-  ) {
-    return null;
-  }
-
-  return {
-    x: mapX,
-    z: mapZ
-  };
-}
-
-function addBlockInFrontOfCamera() {
-  let cell = getMapCellInFrontOfCamera();
-
-  if (cell === null) {
-    return;
-  }
-
-  if (g_map[cell.z][cell.x] < 4) {
-    g_map[cell.z][cell.x]++;
-  }
-
-  renderScene();
-}
-
-function deleteBlockInFrontOfCamera() {
-  let cell = getMapCellInFrontOfCamera();
-
-  if (cell === null) {
-    return;
-  }
-
-  if (g_map[cell.z][cell.x] > 0) {
-    g_map[cell.z][cell.x]--;
-  }
-
-  renderScene();
-}
-
   let body = new Matrix4();
   body.translate(0, 0, 0);
   body.scale(1.4, 0.65, 0.55);
-  drawColoredCube(body, [0.55, 0.33, 0.16, 1]);
+  drawCube(body, [0.55, 0.33, 0.16, 1]);
 
   let chest = new Matrix4();
   chest.translate(0.55, 0.05, 0);
   chest.scale(0.45, 0.7, 0.6);
-  drawColoredCube(body, [0.55, 0.33, 0.16, 1]);
-
+  drawCube(chest, [0.63, 0.40, 0.22, 1]);
 
   let head = new Matrix4();
   head.translate(1.0, 0.45, 0);
   head.rotate(gHeadAngle, 0, 1, 0);
   head.scale(0.5, 0.45, 0.45);
-  drawColoredCube(body, [0.55, 0.33, 0.16, 1]);
+  drawCube(head, [0.68, 0.45, 0.25, 1]);
 
   let snout = new Matrix4();
   snout.translate(1.32, 0.38, 0);
   snout.scale(0.28, 0.22, 0.25);
-  drawColoredCube(head, [0.68, 0.45, 0.25, 1]);
+  drawCube(snout, [0.85, 0.65, 0.45, 1]);
 
   let nose = new Matrix4();
   nose.translate(1.52, 0.39, 0);
@@ -768,13 +943,14 @@ function deleteBlockInFrontOfCamera() {
   ear1.translate(0.91, 0.76, 0.2);
   ear1.rotate(20 + gEarAngle, 1, 0, 0);
   ear1.scale(0.18, 0.35, 0.12);
-  drawColoredCube(snout, [0.85, 0.65, 0.45, 1]);
+  drawCube(ear1, [0.35, 0.18, 0.08, 1]);
 
   let ear2 = new Matrix4();
   ear2.translate(0.91, 0.76, -0.2);
   ear2.rotate(-20 - gEarAngle, 1, 0, 0);  
   ear2.scale(0.18, 0.35, 0.12);
-  drawColoredCube(ear1, [0.35, 0.18, 0.08, 1]);
+  drawCube(ear2, [0.35, 0.18, 0.08, 1]);
+
 
   let tail = new Matrix4();
   tail.translate(-0.75, 0.25, 0);
@@ -783,11 +959,11 @@ function deleteBlockInFrontOfCamera() {
   tail.scale(0.85, 0.15, 0.15);
   drawCone(tail, [0.45, 0.25, 0.12, 1]);
 
-  drawLeg(-0.45, -0.35, 0.25, -gLegAngle, -gCalfAngle, -gFootAngle);
-  drawLeg( 0.45, -0.35, 0.25,  gLegAngle,  gCalfAngle,  gFootAngle);
+drawLeg(-0.45, -0.35, 0.25, -gLegAngle, -gCalfAngle, -gFootAngle);
+drawLeg( 0.45, -0.35, 0.25, gLegAngle, gCalfAngle, gFootAngle);
 
-  drawLeg(-0.45, -0.35, -0.25,  gLegAngle,  gCalfAngle,  gFootAngle);
-  drawLeg( 0.45, -0.35, -0.25, -gLegAngle, -gCalfAngle, -gFootAngle);
+drawLeg(-0.45, -0.35, -0.25, gLegAngle, gCalfAngle, gFootAngle);
+drawLeg( 0.45, -0.35, -0.25, -gLegAngle, -gCalfAngle, -gFootAngle);
 }
 
 function drawLeg(x, y, z, thighAngle, calfAngle, footAngle) {
